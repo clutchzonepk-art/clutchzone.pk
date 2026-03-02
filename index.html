@@ -80,6 +80,7 @@
         updateHomeButtons(true);
         refreshProfilePage();
         refreshWalletPage();
+        refreshTournamentButtons();
       } else {
         showPage('setup');
       }
@@ -225,7 +226,18 @@
     if (currentProfile) currentProfile.walletBalance = newBalance;
     if (window._globalProfile) window._globalProfile.walletBalance = newBalance;
     if (window._currentProfile) window._currentProfile.walletBalance = newBalance;
+
+    // Save active tournament so player cant join another
+    await updateDoc(doc(db, "players", currentUser.uid), {
+      activeTournament: tournamentId,
+      activeTournamentName: tournamentName
+    });
+    if (currentProfile) currentProfile.activeTournament = tournamentId;
+    if (window._globalProfile) window._globalProfile.activeTournament = tournamentId;
+    if (window._currentProfile) window._currentProfile.activeTournament = tournamentId;
+
     refreshWalletPage();
+    refreshTournamentButtons();
     hideModal('join-confirm-modal');
     showToast("🎮 Joined! Room ID will be sent on WhatsApp before match!");
   };
@@ -1076,6 +1088,14 @@ nav {
     <div class="stat-card"><div class="stat-icon">💰</div><div class="stat-value">Rs 20</div><div class="stat-label">Per Kill</div></div>
   </div>
 
+  <!-- ADSTERRA AD - HOME PAGE -->
+  <div style="margin:0 16px 20px;text-align:center;">
+    <!-- REPLACE WITH YOUR ADSTERRA BANNER CODE -->
+    <div id="adsterra-home" style="background:var(--dark3);border:1px dashed var(--border);border-radius:10px;padding:16px;font-size:12px;color:var(--text-dim);">
+      📢 Ad Space — Add Adsterra code here
+    </div>
+  </div>
+
   <div class="section">
     <div class="section-title">⚡ How It Works</div>
     <div class="steps">
@@ -1135,7 +1155,7 @@ nav {
         <div><div style="font-size:12px;color:var(--text-dim);margin-bottom:4px">Total Prize Pool</div><div class="prize-main">Rs 2,500+</div></div>
         <div class="prize-breakdown">🥇 Rs 600<br>🥈 Rs 400<br>🥉 Rs 200<br>💀 Rs 20/kill</div>
       </div>
-      <button class="join-btn" onclick="openJoinModal('tournament_daily1', 70, 'Daily Clash #1', 32, 50)">JOIN — Rs 70 Entry</button>
+      <button class="join-btn" data-tid="tournament_daily1" onclick="openJoinModal('tournament_daily1', 70, 'Daily Clash #1', 32, 50)">JOIN — Rs 70 Entry</button>
     </div>
 
     <div class="t-card">
@@ -1157,7 +1177,7 @@ nav {
         <div><div style="font-size:12px;color:var(--text-dim);margin-bottom:4px">Total Prize Pool</div><div class="prize-main">Rs 2,500+</div></div>
         <div class="prize-breakdown">🥇 Rs 600<br>🥈 Rs 400<br>🥉 Rs 200<br>💀 Rs 20/kill</div>
       </div>
-      <button class="join-btn" onclick="openJoinModal('tournament_night1', 70, 'Night Warriors', 10, 50)">JOIN — Rs 70 Entry</button>
+      <button class="join-btn" data-tid="tournament_night1" onclick="openJoinModal('tournament_night1', 70, 'Night Warriors', 10, 50)">JOIN — Rs 70 Entry</button>
     </div>
 
     <div class="t-card">
@@ -1179,9 +1199,15 @@ nav {
         <div><div style="font-size:12px;color:var(--text-dim);margin-bottom:4px">Total Prize Pool</div><div class="prize-main">Rs 2,500+</div></div>
         <div class="prize-breakdown">🥇 Rs 600<br>🥈 Rs 400<br>🥉 Rs 200<br>💀 Rs 20/kill</div>
       </div>
-      <button class="join-btn" onclick="openJoinModal('tournament_sat1', 70, 'Saturday Showdown', 0, 50)">JOIN — Rs 70 Entry</button>
+      <button class="join-btn" data-tid="tournament_sat1" onclick="openJoinModal('tournament_sat1', 70, 'Saturday Showdown', 0, 50)">JOIN — Rs 70 Entry</button>
     </div>
 
+  <!-- ADSTERRA AD - TOURNAMENT PAGE BOTTOM -->
+  <div style="padding:0 16px 16px;text-align:center;">
+    <div id="adsterra-tournament" style="background:var(--dark3);border:1px dashed var(--border);border-radius:10px;padding:16px;font-size:12px;color:var(--text-dim);">
+      📢 Ad Space — Add Adsterra code here
+    </div>
+  </div>
   </div>
 </div>
 
@@ -1309,7 +1335,7 @@ nav {
   <button class="bnav-btn active" onclick="showPage('home')" id="nav-home">
     <svg viewBox="0 0 24 24" fill="currentColor"><path d="M10 20v-6h4v6h5v-8h3L12 3 2 12h3v8z"/></svg>Home
   </button>
-  <button class="bnav-btn" onclick="showPage('tournaments')" id="nav-tournaments">
+  <button class="bnav-btn" onclick="showPage('tournaments'); refreshTournamentButtons();" id="nav-tournaments">
     <svg viewBox="0 0 24 24" fill="currentColor"><path d="M18.5 1.5H5.5C4.4 1.5 3.5 2.4 3.5 3.5v3c0 3.9 2.6 7.1 6.1 8.2V17h-2c-.6 0-1 .4-1 1s.4 1 1 1h5c.6 0 1-.4 1-1s-.4-1-1-1h-2v-2.3c3.5-1.1 6.1-4.3 6.1-8.2v-3c0-1.1-.9-2-2-2z"/></svg>Tournaments
   </button>
   <button class="bnav-btn" onclick="showPage('wallet')" id="nav-wallet">
@@ -1453,6 +1479,16 @@ function openJoinModal(tid, fee, name, current, max) {
   const p = window._currentProfile || window._globalProfile;
   if (!p) { showModal('login-prompt-modal'); return; }
   if (current >= max) { showToast("❌ Tournament is full!"); return; }
+
+  // Block if already in a tournament
+  if (p.activeTournament) {
+    if (p.activeTournament === tid) {
+      showToast("✅ You already joined this tournament!"); return;
+    }
+    showToast("⚠️ You are already in: " + (p.activeTournamentName || "a tournament") + ". Wait for it to finish!"); 
+    return;
+  }
+
   _joinTournamentId = tid;
   _joinFee = fee;
   _joinName = name;
@@ -1464,6 +1500,25 @@ function openJoinModal(tid, fee, name, current, max) {
     if (window._firebaseReady) window._firebaseReady.joinTournament(_joinTournamentId, _joinFee, _joinName);
   };
   showModal('join-confirm-modal');
+}
+
+function refreshTournamentButtons() {
+  const p = window._currentProfile || window._globalProfile;
+  if (!p) return;
+  // Update all join buttons
+  document.querySelectorAll('[data-tid]').forEach(btn => {
+    const tid = btn.getAttribute('data-tid');
+    if (p.activeTournament === tid) {
+      btn.textContent = '✅ JOINED';
+      btn.disabled = true;
+      btn.style.background = 'rgba(46,204,113,0.2)';
+      btn.style.color = 'var(--green)';
+      btn.style.border = '1px solid rgba(46,204,113,0.4)';
+    } else if (p.activeTournament && p.activeTournament !== tid) {
+      btn.textContent = '🔒 Already In Tournament';
+      btn.disabled = true;
+    }
+  });
 }
 
 // Store profile globally so JS functions can access it
