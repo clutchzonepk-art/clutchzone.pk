@@ -196,6 +196,11 @@
       return;
     }
 
+    // Immediately close modal and disable button to prevent double clicks
+    const confirmBtn = document.getElementById('jm-confirm-btn');
+    if (confirmBtn) { confirmBtn.disabled = true; confirmBtn.textContent = '⏳ Processing...'; }
+    hideModal('join-confirm-modal');
+
     // Deduct entry fee
     const newBalance = profile.walletBalance - entryFee;
     await updateDoc(doc(db, "players", currentUser.uid), { 
@@ -238,7 +243,6 @@
 
     refreshWalletPage();
     refreshTournamentButtons();
-    hideModal('join-confirm-modal');
     showToast("🎮 Joined! Room ID will be sent on WhatsApp before match!");
   };
 
@@ -431,7 +435,7 @@ nav {
 }
 
 .bnav-btn {
-  flex:1; padding:10px 6px;
+  flex:1; padding:8px 6px;
   display:flex; flex-direction:column; align-items:center; gap:3px;
   cursor:pointer; color:var(--text-dim);
   font-size:10px; font-family:'Exo 2',sans-serif;
@@ -445,7 +449,7 @@ nav {
 .bnav-btn.active svg { filter: drop-shadow(0 0 6px rgba(245,166,35,0.6)); }
 
 /* CONTENT */
-.content { padding:16px; padding-bottom:80px; }
+.content { padding:16px; padding-bottom:120px; }
 
 /* ====== HOME PAGE ====== */
 .hero {
@@ -1031,9 +1035,40 @@ nav {
 
 .success-sub { font-size:14px; color:var(--text-dim); text-align:center; line-height:1.6; margin-bottom:24px; }
 
+/* AD BANNER */
+.ad-banner {
+  margin: 0 16px 16px;
+  background: var(--dark3);
+  border: 1px dashed var(--border);
+  border-radius: 10px;
+  padding: 14px;
+  text-align: center;
+  font-size: 12px;
+  color: var(--text-dim);
+  min-height: 60px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.ad-banner-bottom {
+  position: fixed;
+  bottom: 62px;
+  left: 0; right: 0;
+  background: var(--dark2);
+  border-top: 1px solid var(--border2);
+  padding: 6px 16px;
+  text-align: center;
+  z-index: 99;
+  min-height: 54px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
 /* TOAST */
 .toast {
-  position:fixed; bottom:82px; left:50%;
+  position:fixed; bottom:130px; left:50%;
   transform:translateX(-50%);
   background:var(--dark3);
   border:1px solid var(--border);
@@ -1089,11 +1124,9 @@ nav {
   </div>
 
   <!-- ADSTERRA AD - HOME PAGE -->
-  <div style="margin:0 16px 20px;text-align:center;">
-    <!-- REPLACE WITH YOUR ADSTERRA BANNER CODE -->
-    <div id="adsterra-home" style="background:var(--dark3);border:1px dashed var(--border);border-radius:10px;padding:16px;font-size:12px;color:var(--text-dim);">
-      📢 Ad Space — Add Adsterra code here
-    </div>
+  <div class="ad-banner">
+    <!-- PASTE ADSTERRA BANNER CODE HERE (HOME) -->
+    📢 Advertisement
   </div>
 
   <div class="section">
@@ -1202,12 +1235,10 @@ nav {
       <button class="join-btn" data-tid="tournament_sat1" onclick="openJoinModal('tournament_sat1', 70, 'Saturday Showdown', 0, 50)">JOIN — Rs 70 Entry</button>
     </div>
 
-  <!-- ADSTERRA AD - TOURNAMENT PAGE BOTTOM -->
-  <div style="padding:0 16px 16px;text-align:center;">
-    <div id="adsterra-tournament" style="background:var(--dark3);border:1px dashed var(--border);border-radius:10px;padding:16px;font-size:12px;color:var(--text-dim);">
-      📢 Ad Space — Add Adsterra code here
-    </div>
-  </div>
+  <!-- ADSTERRA AD - TOURNAMENT PAGE -->
+  <div class="ad-banner">
+    <!-- PASTE ADSTERRA BANNER CODE HERE (TOURNAMENTS) -->
+    📢 Advertisement
   </div>
 </div>
 
@@ -1228,6 +1259,12 @@ nav {
       <div class="w-stat"><div class="w-stat-val" style="color:var(--red)">Rs 0</div><div class="w-stat-lbl">Total Withdrawn</div></div>
       <div class="w-stat"><div class="w-stat-val" style="color:var(--gold)">Rs 0</div><div class="w-stat-lbl">Total Won</div></div>
       <div class="w-stat"><div class="w-stat-val" style="color:var(--blue)">Rs 0</div><div class="w-stat-lbl">Total Kills Prize</div></div>
+    </div>
+
+    <!-- ADSTERRA AD - WALLET PAGE -->
+    <div class="ad-banner">
+      <!-- PASTE ADSTERRA BANNER CODE HERE (WALLET) -->
+      📢 Advertisement
     </div>
 
     <div style="background:var(--dark3);border:1px solid var(--border2);border-radius:16px;padding:18px;">
@@ -1251,6 +1288,12 @@ nav {
     <button class="lb-tab" onclick="switchLbTab(this,'monthly')">Monthly</button>
     <button class="lb-tab" onclick="switchLbTab(this,'weekly')">Weekly</button>
   </div>
+  <!-- ADSTERRA AD - LEADERBOARD PAGE -->
+  <div class="ad-banner" style="margin:0 16px 16px;">
+    <!-- PASTE ADSTERRA BANNER CODE HERE (LEADERBOARD) -->
+    📢 Advertisement
+  </div>
+
   <div id="leaderboard-list">
     <div style="text-align:center;padding:40px;color:var(--text-dim)">Loading leaderboard...</div>
   </div>
@@ -1328,6 +1371,12 @@ nav {
 
     <button class="btn-gold" onclick="submitProfile()">✅ CREATE MY PROFILE</button>
   </div>
+</div>
+
+<!-- BOTTOM AD BANNER -->
+<div class="ad-banner-bottom">
+  <!-- PASTE ADSTERRA STICKY BOTTOM BANNER CODE HERE -->
+  📢 Advertisement
 </div>
 
 <!-- BOTTOM NAV -->
@@ -1497,6 +1546,8 @@ function openJoinModal(tid, fee, name, current, max) {
   document.getElementById('jm-balance').textContent = 'Rs ' + (p.walletBalance||0).toLocaleString();
   document.getElementById('jm-after').textContent = 'Rs ' + ((p.walletBalance||0) - fee).toLocaleString();
   document.getElementById('jm-confirm-btn').onclick = () => {
+    hideModal('join-confirm-modal');
+    showToast("⏳ Processing...");
     if (window._firebaseReady) window._firebaseReady.joinTournament(_joinTournamentId, _joinFee, _joinName);
   };
   showModal('join-confirm-modal');
