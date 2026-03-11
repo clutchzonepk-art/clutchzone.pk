@@ -1592,6 +1592,49 @@ function showPage(p) {
   const nb = document.getElementById('nav-' + p);
   if (nb) nb.classList.add('active');
   window.scrollTo(0, 0);
+  if (p === 'wallet') loadTransactions();
+}
+
+async function loadTransactions() {
+  const txList = document.getElementById('tx-list');
+  if (!txList || !window._currentUser) return;
+  txList.innerHTML = '<div style="text-align:center;padding:20px;color:var(--text-dim)">Loading...</div>';
+  try {
+    const snap = await window._db
+      .collection('players').doc(window._currentUser.uid)
+      .collection('transactions')
+      .orderBy('createdAt', 'desc')
+      .limit(30)
+      .get();
+
+    if (snap.empty) {
+      txList.innerHTML = '<div style="text-align:center;padding:30px;color:var(--text-dim);font-size:14px">No transactions yet.<br>Deposit to get started! 💪</div>';
+      return;
+    }
+
+    txList.innerHTML = '';
+    snap.forEach(doc => {
+      const tx = doc.data();
+      const isPos = tx.amount > 0;
+      const icon = tx.type === 'deposit' ? '⬇️' : tx.type === 'prize' ? '🏆' : tx.type === 'entry_fee' ? '🎮' : tx.type === 'withdrawal' ? '🏧' : '💰';
+      const iconClass = isPos ? 'in' : (tx.type === 'entry_fee' ? 'fee' : 'out');
+      const dateStr = tx.createdAt ? new Date(tx.createdAt).toLocaleDateString('en-PK', {day:'numeric', month:'short', hour:'2-digit', minute:'2-digit'}) : '';
+      txList.innerHTML += `
+      <div class="tx-item">
+        <div class="tx-icon ${iconClass}">${icon}</div>
+        <div class="tx-info">
+          <div class="tx-name">${tx.description || tx.type || 'Transaction'}</div>
+          <div class="tx-date">${dateStr}</div>
+        </div>
+        <div>
+          <div class="tx-amt ${isPos ? 'pos' : 'neg'}">${isPos ? '+' : ''}Rs ${Math.abs(tx.amount).toLocaleString()}</div>
+          <div class="tx-status">✅ Done</div>
+        </div>
+      </div>`;
+    });
+  } catch(e) {
+    txList.innerHTML = `<div style="text-align:center;padding:20px;color:red">❌ Error: ${e.message}</div>`;
+  }
 }
 
 function showModal(id) { document.getElementById(id).classList.add('active'); }
