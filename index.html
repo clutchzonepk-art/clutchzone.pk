@@ -160,6 +160,8 @@
     if (!amount || amount < 500) { showToast("❌ Minimum withdrawal is Rs 500!"); return; }
     if (amount > currentProfile.walletBalance) { showToast("❌ Insufficient balance!"); return; }
 
+    const newBalance = currentProfile.walletBalance - amount;
+
     // Save request to Firebase
     await addDoc(collection(db, "withdrawalRequests"), {
       playerUID: currentProfile.gameUID,
@@ -172,7 +174,20 @@
       timestamp: serverTimestamp()
     });
 
-    // WhatsApp notification below is enough
+    // Deduct balance + save transaction
+    await db.collection('players').doc(currentUser.uid).update({ walletBalance: newBalance });
+    await addDoc(collection(db, "players", currentUser.uid, "transactions"), {
+      type: 'withdrawal',
+      description: `Withdrawal - ${currentProfile.paymentMethod}`,
+      amount: -amount,
+      createdAt: new Date().toISOString()
+    });
+
+    // Update local profile
+    currentProfile.walletBalance = newBalance;
+    if (window._globalProfile) window._globalProfile.walletBalance = newBalance;
+    if (window._currentProfile) window._currentProfile.walletBalance = newBalance;
+    document.getElementById('wallet-balance').textContent = 'Rs ' + newBalance.toLocaleString();
 
     // WhatsApp notification to owner
     const msg = `🔔 *Withdrawal Request*%0APlayer: *${currentProfile.name}*%0AUID: *${currentProfile.gameUID}*%0AAmount: *Rs ${amount}*%0AMethod: *${currentProfile.paymentMethod}*%0AAccount: *${currentProfile.paymentAccount}*`;
@@ -1600,11 +1615,10 @@ async function loadTransactions() {
   if (!txList || !window._currentUser) return;
   txList.innerHTML = '<div style="text-align:center;padding:20px;color:var(--text-dim)">Loading...</div>';
   try {
+    // Get without orderBy to avoid index errors on old data
     const snap = await window._db
       .collection('players').doc(window._currentUser.uid)
       .collection('transactions')
-      .orderBy('createdAt', 'desc')
-      .limit(30)
       .get();
 
     if (snap.empty) {
@@ -1612,13 +1626,34 @@ async function loadTransactions() {
       return;
     }
 
-    txList.innerHTML = '';
+    // Sort in JS — newest first, handle both createdAt and timestamp
+    let txns = [];
     snap.forEach(doc => {
-      const tx = doc.data();
+      const d = doc.data();
+      // Normalize date — could be createdAt string or timestamp serverTimestamp
+      let sortKey = 0;
+      if (d.createdAt) sortKey = new Date(d.createdAt).getTime();
+      else if (d.timestamp && d.timestamp.toDate) sortKey = d.timestamp.toDate().getTime();
+      txns.push({ ...d, _sortKey: sortKey });
+    });
+    txns.sort((a, b) => b._sortKey - a._sortKey);
+
+    txList.innerHTML = '';
+    txns.forEach(tx => {
       const isPos = tx.amount > 0;
-      const icon = tx.type === 'deposit' ? '⬇️' : tx.type === 'prize' ? '🏆' : tx.type === 'entry_fee' ? '🎮' : tx.type === 'withdrawal' ? '🏧' : '💰';
+      const icon = tx.type === 'deposit' ? '⬇️'
+        : tx.type === 'prize' ? '🏆'
+        : tx.type === 'entry_fee' ? '🎮'
+        : tx.type === 'withdrawal' ? '🏧'
+        : tx.type === 'admin_update' ? '⚙️'
+        : '💰';
       const iconClass = isPos ? 'in' : (tx.type === 'entry_fee' ? 'fee' : 'out');
-      const dateStr = tx.createdAt ? new Date(tx.createdAt).toLocaleDateString('en-PK', {day:'numeric', month:'short', hour:'2-digit', minute:'2-digit'}) : '';
+
+      // Handle both date formats
+      let dateStr = '';
+      if (tx.createdAt) dateStr = new Date(tx.createdAt).toLocaleDateString('en-PK', {day:'numeric', month:'short', hour:'2-digit', minute:'2-digit'});
+      else if (tx.timestamp && tx.timestamp.toDate) dateStr = tx.timestamp.toDate().toLocaleDateString('en-PK', {day:'numeric', month:'short', hour:'2-digit', minute:'2-digit'});
+
       txList.innerHTML += `
       <div class="tx-item">
         <div class="tx-icon ${iconClass}">${icon}</div>
