@@ -475,6 +475,23 @@
         txns.push({ ...data, _sortKey: sortKey });
       });
       txns.sort((a, b) => b._sortKey - a._sortKey);
+      // Calculate wallet stats
+      let totalDeposited = 0, totalWithdrawn = 0, totalWon = 0, totalKills = 0;
+      txns.forEach(tx => {
+        if (tx.type === 'deposit' || (tx.type === 'admin_update' && tx.amount > 0)) totalDeposited += tx.amount;
+        if (tx.type === 'withdrawal') totalWithdrawn += Math.abs(tx.amount);
+        if (tx.type === 'prize') totalWon += tx.amount;
+        if (tx.type === 'kill_prize') totalKills += tx.amount;
+      });
+      const sd = document.getElementById('stat-deposited');
+      const sw = document.getElementById('stat-withdrawn');
+      const so = document.getElementById('stat-won');
+      const sk = document.getElementById('stat-kills');
+      if (sd) sd.textContent = 'Rs ' + totalDeposited.toLocaleString();
+      if (sw) sw.textContent = 'Rs ' + totalWithdrawn.toLocaleString();
+      if (so) so.textContent = 'Rs ' + totalWon.toLocaleString();
+      if (sk) sk.textContent = 'Rs ' + totalKills.toLocaleString();
+
       txList.innerHTML = '';
       txns.forEach(tx => {
         const isPos = tx.amount > 0;
@@ -1465,10 +1482,10 @@ nav {
     </div>
 
     <div class="wallet-stats">
-      <div class="w-stat"><div class="w-stat-val" style="color:var(--green)">Rs 0</div><div class="w-stat-lbl">Total Deposited</div></div>
-      <div class="w-stat"><div class="w-stat-val" style="color:var(--red)">Rs 0</div><div class="w-stat-lbl">Total Withdrawn</div></div>
-      <div class="w-stat"><div class="w-stat-val" style="color:var(--gold)">Rs 0</div><div class="w-stat-lbl">Total Won</div></div>
-      <div class="w-stat"><div class="w-stat-val" style="color:var(--blue)">Rs 0</div><div class="w-stat-lbl">Total Kills Prize</div></div>
+      <div class="w-stat"><div class="w-stat-val" style="color:var(--green)" id="stat-deposited">Rs 0</div><div class="w-stat-lbl">Total Deposited</div></div>
+      <div class="w-stat"><div class="w-stat-val" style="color:var(--red)" id="stat-withdrawn">Rs 0</div><div class="w-stat-lbl">Total Withdrawn</div></div>
+      <div class="w-stat"><div class="w-stat-val" style="color:var(--gold)" id="stat-won">Rs 0</div><div class="w-stat-lbl">Total Won</div></div>
+      <div class="w-stat"><div class="w-stat-val" style="color:var(--blue)" id="stat-kills">Rs 0</div><div class="w-stat-lbl">Total Kills Prize</div></div>
     </div>
 
     <div style="background:var(--dark3);border:1px solid var(--border2);border-radius:16px;padding:18px;">
