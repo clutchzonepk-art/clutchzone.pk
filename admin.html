@@ -281,6 +281,14 @@ body{font-family:'Exo 2',sans-serif;background:var(--dark);color:var(--text);min
   const db = getFirestore(app);
   const provider = new GoogleAuthProvider();
 
+  // Expose globally for announcement functions
+  window._db = db;
+  window._collection = collection;
+  window._getDocs = getDocs;
+  window._addDoc = addDoc;
+  window._deleteDoc = deleteDoc;
+  window._doc = doc;
+
   let allPlayers = [], allTournaments = [], allWithdrawals = [];
 
   // ===== AUTH =====
@@ -677,7 +685,7 @@ async function createAnnouncement() {
   }
 
   try {
-    await addDoc(collection(db, 'announcements'), data);
+    await window._addDoc(window._collection(window._db, 'announcements'), data);
     showToast("✅ Announcement posted!");
     hideModal('ann-modal');
     document.getElementById('ann-title').value = '';
@@ -693,7 +701,7 @@ async function loadAnnouncements() {
   if (!list) return;
   list.innerHTML = '<div style="text-align:center;padding:20px;color:var(--dim)">Loading...</div>';
   try {
-    const snap = await getDocs(collection(db, 'announcements'));
+    const snap = await window._getDocs(window._collection(window._db, 'announcements'));
     const docs = [];
     snap.forEach(d => docs.push({id: d.id, ...d.data()}));
     docs.sort((a,b) => (b.pinned?1:0) - (a.pinned?1:0) || b.createdAt?.localeCompare(a.createdAt||''));
@@ -725,7 +733,7 @@ async function loadAnnouncements() {
 async function deleteAnnouncement(id) {
   if (!confirm("Delete this announcement?")) return;
   try {
-    await deleteDoc(doc(db, 'announcements', id));
+    await window._deleteDoc(window._doc(window._db, 'announcements', id));
     showToast("✅ Deleted!");
     loadAnnouncements();
   } catch(e) { showToast("❌ Error: " + e.message); }
