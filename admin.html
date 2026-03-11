@@ -129,6 +129,7 @@ body{font-family:'Exo 2',sans-serif;background:var(--dark);color:var(--text);min
     <button class="atab" onclick="switchTab('tournaments',this)">🏆 Tournaments</button>
     <button class="atab" onclick="switchTab('withdrawals',this)">💸 Withdrawals</button>
     <button class="atab" onclick="switchTab('announcements',this)">📢 Announcements</button>
+    <button class="atab" onclick="switchTab('results',this)">🏆 Match Results</button>
   </div>
 
   <div class="acontent">
@@ -195,6 +196,16 @@ body{font-family:'Exo 2',sans-serif;background:var(--dark);color:var(--text);min
         <button class="abtn green-btn" onclick="showModal('ann-modal')">➕ Create New</button>
       </div>
       <div id="ann-admin-list"><div style="text-align:center;padding:30px;color:var(--dim)">Loading...</div></div>
+    </div>
+
+    <!-- MATCH RESULTS TAB -->
+    <div class="tab-sec" id="tab-results">
+      <br>
+      <div class="sec-hdr">
+        <div class="sec-title">🏆 Match Results</div>
+        <button class="abtn green-btn" onclick="showModal('result-modal')">➕ Post Result</button>
+      </div>
+      <div id="results-admin-list"><div style="text-align:center;padding:30px;color:var(--dim)">Loading...</div></div>
     </div>
 
   </div>
@@ -290,6 +301,70 @@ body{font-family:'Exo 2',sans-serif;background:var(--dark);color:var(--text);min
     <button class="abtn blue-btn" style="margin-bottom:14px;width:100%" onclick="addKillRow()">➕ Add Player Kill Bonus</button>
 
     <button class="btn-gold" onclick="distributeAllPrizes()">🏆 DISTRIBUTE ALL PRIZES</button>
+  </div>
+</div>
+
+<!-- MODAL: POST MATCH RESULT -->
+<div class="modal-overlay" id="result-modal" onclick="closeOut(event,'result-modal')">
+  <div class="modal" style="max-height:92vh;overflow-y:auto">
+    <div class="mhandle"></div>
+    <div class="mtitle">🏆 Post Match Result <span class="mclose" onclick="hideModal('result-modal')">✕</span></div>
+
+    <div class="fg">
+      <label class="fl">Tournament Name *</label>
+      <input type="text" class="fi" id="res-tname" placeholder="e.g. Daily Clash #5">
+    </div>
+
+    <div style="font-size:13px;color:var(--dim);margin-bottom:10px;font-weight:600;margin-top:4px">🥇 TOP 3 WINNERS</div>
+
+    <div style="background:var(--dark4);border-radius:10px;padding:14px;margin-bottom:10px">
+      <div style="font-size:12px;color:var(--gold);font-weight:700;margin-bottom:10px">🥇 1ST PLACE</div>
+      <div class="fgrid">
+        <div class="fg"><label class="fl">Player Name</label><input type="text" class="fi" id="res-name1" placeholder="In-Game Name"></div>
+        <div class="fg"><label class="fl">Game UID</label><input type="text" class="fi" id="res-uid1" placeholder="UID"></div>
+      </div>
+      <div class="fgrid">
+        <div class="fg"><label class="fl">Prize (Rs)</label><input type="number" class="fi" id="res-prize1" placeholder="600" value="600"></div>
+        <div class="fg"><label class="fl">Kills</label><input type="number" class="fi" id="res-kills1" placeholder="0" min="0"></div>
+      </div>
+    </div>
+
+    <div style="background:var(--dark4);border-radius:10px;padding:14px;margin-bottom:10px">
+      <div style="font-size:12px;color:#C0C0C0;font-weight:700;margin-bottom:10px">🥈 2ND PLACE</div>
+      <div class="fgrid">
+        <div class="fg"><label class="fl">Player Name</label><input type="text" class="fi" id="res-name2" placeholder="In-Game Name"></div>
+        <div class="fg"><label class="fl">Game UID</label><input type="text" class="fi" id="res-uid2" placeholder="UID"></div>
+      </div>
+      <div class="fgrid">
+        <div class="fg"><label class="fl">Prize (Rs)</label><input type="number" class="fi" id="res-prize2" placeholder="400" value="400"></div>
+        <div class="fg"><label class="fl">Kills</label><input type="number" class="fi" id="res-kills2" placeholder="0" min="0"></div>
+      </div>
+    </div>
+
+    <div style="background:var(--dark4);border-radius:10px;padding:14px;margin-bottom:14px">
+      <div style="font-size:12px;color:#CD7F32;font-weight:700;margin-bottom:10px">🥉 3RD PLACE</div>
+      <div class="fgrid">
+        <div class="fg"><label class="fl">Player Name</label><input type="text" class="fi" id="res-name3" placeholder="In-Game Name"></div>
+        <div class="fg"><label class="fl">Game UID</label><input type="text" class="fi" id="res-uid3" placeholder="UID"></div>
+      </div>
+      <div class="fgrid">
+        <div class="fg"><label class="fl">Prize (Rs)</label><input type="number" class="fi" id="res-prize3" placeholder="200" value="200"></div>
+        <div class="fg"><label class="fl">Kills</label><input type="number" class="fi" id="res-kills3" placeholder="0" min="0"></div>
+      </div>
+    </div>
+
+    <div style="font-size:13px;color:var(--dim);margin-bottom:10px;font-weight:600">💀 TOP FRAGGER (optional)</div>
+    <div class="fgrid" style="margin-bottom:14px">
+      <div class="fg"><label class="fl">Player Name</label><input type="text" class="fi" id="res-frag-name" placeholder="Top killer name"></div>
+      <div class="fg"><label class="fl">Total Kills</label><input type="number" class="fi" id="res-frag-kills" placeholder="e.g. 12" min="0"></div>
+    </div>
+
+    <div class="fgrid" style="margin-bottom:6px">
+      <div class="fg"><label class="fl">Total Players</label><input type="number" class="fi" id="res-total-players" placeholder="e.g. 48" min="1"></div>
+      <div class="fg"><label class="fl">Total Prize Pool (Rs)</label><input type="number" class="fi" id="res-total-prize" placeholder="e.g. 1200"></div>
+    </div>
+
+    <button class="btn-gold" onclick="postMatchResult()">📤 POST MATCH RESULT</button>
   </div>
 </div>
 
@@ -687,6 +762,7 @@ function switchTab(n, btn) {
   document.getElementById('tab-'+n).classList.add('active');
   btn.classList.add('active');
   if (n === 'announcements') loadAnnouncements();
+  if (n === 'results') loadMatchResults();
 }
 function showModal(id) { document.getElementById(id).classList.add('active'); }
 function hideModal(id) { document.getElementById(id).classList.remove('active'); }
@@ -875,6 +951,106 @@ async function deleteAnnouncement(id) {
     await window._deleteDoc(window._doc(window._db, 'announcements', id));
     showToast("✅ Deleted!");
     loadAnnouncements();
+  } catch(e) { showToast("❌ Error: " + e.message); }
+}
+
+// ===== MATCH RESULTS =====
+async function postMatchResult() {
+  const tname = document.getElementById('res-tname').value.trim();
+  if (!tname) { showToast("❌ Tournament name likho!"); return; }
+
+  const n1 = document.getElementById('res-name1').value.trim();
+  const u1 = document.getElementById('res-uid1').value.trim();
+  if (!n1 || !u1) { showToast("❌ 1st place winner zaroor bharo!"); return; }
+
+  const winners = [];
+  const placements = [
+    { pos:1, nameId:'res-name1', uidId:'res-uid1', prizeId:'res-prize1', killsId:'res-kills1' },
+    { pos:2, nameId:'res-name2', uidId:'res-uid2', prizeId:'res-prize2', killsId:'res-kills2' },
+    { pos:3, nameId:'res-name3', uidId:'res-uid3', prizeId:'res-prize3', killsId:'res-kills3' },
+  ];
+  placements.forEach(p => {
+    const name = document.getElementById(p.nameId).value.trim();
+    const uid  = document.getElementById(p.uidId).value.trim();
+    const prize= parseInt(document.getElementById(p.prizeId).value) || 0;
+    const kills= parseInt(document.getElementById(p.killsId).value) || 0;
+    if (name && uid) winners.push({ position:p.pos, name, uid, prize, kills });
+  });
+
+  const fragName  = document.getElementById('res-frag-name').value.trim();
+  const fragKills = parseInt(document.getElementById('res-frag-kills').value) || 0;
+  const totalPlayers = parseInt(document.getElementById('res-total-players').value) || 0;
+  const totalPrize   = parseInt(document.getElementById('res-total-prize').value) || 0;
+
+  const data = {
+    tournamentName: tname,
+    winners,
+    totalPlayers,
+    totalPrize,
+    completedAt: new Date().toISOString()
+  };
+  if (fragName && fragKills) data.topKiller = { name: fragName, kills: fragKills };
+
+  const btn = document.querySelector('#result-modal .btn-gold');
+  if (btn) { btn.disabled = true; btn.textContent = '⏳ Posting...'; }
+  try {
+    await window._addDoc(window._collection(window._db, 'matchResults'), data);
+    showToast("✅ Match result posted!");
+    hideModal('result-modal');
+    // Clear fields
+    ['res-tname','res-name1','res-uid1','res-kills1','res-name2','res-uid2','res-kills2',
+     'res-name3','res-uid3','res-kills3','res-frag-name','res-frag-kills',
+     'res-total-players','res-total-prize'].forEach(id => { document.getElementById(id).value = ''; });
+    document.getElementById('res-prize1').value = '600';
+    document.getElementById('res-prize2').value = '400';
+    document.getElementById('res-prize3').value = '200';
+    loadMatchResults();
+  } catch(e) { showToast("❌ Error: " + e.message); }
+  finally { if (btn) { btn.disabled = false; btn.textContent = '📤 POST MATCH RESULT'; } }
+}
+
+async function loadMatchResults() {
+  const list = document.getElementById('results-admin-list');
+  if (!list) return;
+  list.innerHTML = '<div style="text-align:center;padding:20px;color:var(--dim)">Loading...</div>';
+  try {
+    const snap = await window._getDocs(window._collection(window._db, 'matchResults'));
+    const docs = [];
+    snap.forEach(d => docs.push({ id: d.id, ...d.data() }));
+    docs.sort((a, b) => (b.completedAt || '').localeCompare(a.completedAt || ''));
+    if (!docs.length) {
+      list.innerHTML = '<div style="text-align:center;padding:30px;color:var(--dim)">Koi result post nahi kiya abhi.</div>';
+      return;
+    }
+    list.innerHTML = docs.map(r => {
+      const date = r.completedAt ? new Date(r.completedAt).toLocaleDateString('en-PK',{day:'numeric',month:'short',year:'numeric',hour:'2-digit',minute:'2-digit'}) : '';
+      const winners = (r.winners||[]).map(w =>
+        `<div style="font-size:13px;padding:6px 0;border-bottom:1px solid rgba(255,255,255,0.04)">
+          ${w.position===1?'🥇':w.position===2?'🥈':'🥉'} <strong>${w.name}</strong> <span style="color:var(--dim);font-size:11px">(${w.uid})</span>
+          <span style="color:var(--gold);float:right">Rs ${(w.prize||0).toLocaleString()}${w.kills?` • 💀${w.kills}`:''}</span>
+        </div>`).join('');
+      return `<div style="background:var(--dark3);border:1px solid var(--border2);border-radius:14px;padding:16px;margin-bottom:12px">
+        <div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:10px">
+          <div>
+            <div style="font-family:'Barlow Condensed',sans-serif;font-size:18px;font-weight:800;text-transform:uppercase">${r.tournamentName||'Tournament'}</div>
+            <div style="font-size:11px;color:var(--dim)">📅 ${date}${r.totalPlayers?` • 👥 ${r.totalPlayers} players`:''}</div>
+          </div>
+          <span style="background:rgba(46,204,113,0.12);color:var(--green);border:1px solid rgba(46,204,113,0.25);border-radius:20px;padding:4px 10px;font-size:11px;font-weight:700">✅ Posted</span>
+        </div>
+        <div style="margin-bottom:10px">${winners}</div>
+        ${r.topKiller?`<div style="font-size:12px;color:var(--dim);padding:6px 0">💀 Top Fragger: <strong style="color:var(--red)">${r.topKiller.name} — ${r.topKiller.kills} kills</strong></div>`:''}
+        <button class="abtn red-btn" style="margin-top:8px" onclick="deleteResult('${r.id}')">🗑️ Delete</button>
+      </div>`;
+    }).join('');
+  } catch(e) { list.innerHTML = `<div style="color:red">❌ Error: ${e.message}</div>`; }
+}
+
+async function deleteResult(id) {
+  if (!confirm("Delete this match result?")) return;
+  try {
+    await window._deleteDoc(window._doc(window._db, 'matchResults', id));
+    showToast("✅ Result deleted!");
+    loadMatchResults();
   } catch(e) { showToast("❌ Error: " + e.message); }
 }
 </script>
