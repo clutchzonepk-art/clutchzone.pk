@@ -855,36 +855,67 @@ async function loadAnnouncements() {
     document.getElementById('prize-kill-rate').textContent = kill;
     document.getElementById('kill-bonus-list').innerHTML = '';
 
-    // Load participants into dropdowns
+    // Helper: replace element with input or select
+    function setPlayerField(elId, optHtml) {
+      const existing = document.getElementById(elId);
+      if (!existing) return;
+      if (optHtml) {
+        // Replace with select dropdown
+        const sel = document.createElement('select');
+        sel.className = 'fi';
+        sel.id = elId;
+        sel.innerHTML = optHtml;
+        existing.parentNode.replaceChild(sel, existing);
+      } else {
+        // Replace with plain text input
+        const inp = document.createElement('input');
+        inp.type = 'text';
+        inp.className = 'fi';
+        inp.id = elId;
+        inp.placeholder = 'Enter Player UID manually';
+        inp.value = '';
+        existing.parentNode.replaceChild(inp, existing);
+      }
+    }
+
+    // Show modal immediately with loading state
+    setPlayerField('prize-uid1', null);
+    setPlayerField('prize-uid2', null);
+    setPlayerField('prize-uid3', null);
+    document.getElementById('prize-uid1').placeholder = '⏳ Loading players...';
+    showModal('prize-modal');
+
+    // Then load participants async
     try {
       const snap = await getDocs(collection(db, 'tournaments', tid, 'participants'));
+      if (snap.empty) {
+        // No participants found — use text inputs with helper message
+        ['prize-uid1','prize-uid2','prize-uid3'].forEach(elId => {
+          const el = document.getElementById(elId);
+          if (el) {
+            el.placeholder = 'No joined players found — enter UID manually';
+            el.value = '';
+          }
+        });
+        showToast('⚠️ Koi joined player nahi mila. UID manually type karo.');
+        return;
+      }
       const opts = ['<option value="">-- Select Player --</option>'];
       snap.forEach(d => {
         const p = d.data();
-        opts.push(`<option value="${p.playerUID}">${p.playerName} (${p.playerUID})</option>`);
+        opts.push(`<option value="${p.playerUID}">${p.playerName} — ${p.playerUID}</option>`);
       });
       const optHtml = opts.join('');
-      ['prize-uid1','prize-uid2','prize-uid3'].forEach(elId => {
-        const el = document.getElementById(elId);
-        if (el && el.tagName === 'INPUT') {
-          const sel = document.createElement('select');
-          sel.className = 'fi';
-          sel.id = elId;
-          sel.innerHTML = optHtml;
-          el.parentNode.replaceChild(sel, el);
-        } else if (el) {
-          el.innerHTML = optHtml;
-          el.value = '';
-        }
-      });
+      setPlayerField('prize-uid1', optHtml);
+      setPlayerField('prize-uid2', optHtml);
+      setPlayerField('prize-uid3', optHtml);
     } catch(e) {
-      // fallback to blank text inputs
       ['prize-uid1','prize-uid2','prize-uid3'].forEach(elId => {
         const el = document.getElementById(elId);
-        if (el) el.value = '';
+        if (el) el.placeholder = 'Error loading — enter UID manually';
       });
+      showToast('⚠️ Players load nahi hue: ' + e.message);
     }
-    showModal('prize-modal');
   };
 
   window.addKillRow = () => {
