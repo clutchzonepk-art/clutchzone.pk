@@ -29,6 +29,15 @@
   const db = getFirestore(app);
   const provider = new GoogleAuthProvider();
 
+  // Expose globally
+  window._db = db;
+  window._getDocs = getDocs;
+  window._collection = collection;
+  window._addDoc = addDoc;
+  window._doc = doc;
+  window._query = query;
+  window._orderBy = orderBy;
+
   // OWNER CONFIG
   const OWNER_WHATSAPP = "923270617401";
   const OWNER_EMAIL = "clutchzone.pk@gmail.com";
@@ -1653,79 +1662,19 @@ function switchLbTab(btn, period) {
 }
 
 async function loadAnnouncements() {
-  if (!window._db) return;
-  try {
-    const snap = await window._db.collection('announcements')
-      .orderBy('createdAt', 'desc').limit(10).get();
-    if (snap.empty) return;
-    const section = document.getElementById('announcements-section');
-    const list = document.getElementById('announcements-list');
-    list.innerHTML = '';
-    section.style.display = 'block';
-    snap.forEach(doc => {
-      const a = doc.data();
-      const id = doc.id;
-      const typeLabel = a.type === 'poll' ? 'Poll' : a.type === 'update' ? 'Update' : 'Announcement';
-      const badgeClass = a.type === 'poll' ? 'poll' : a.type === 'update' ? 'update' : 'announcement';
-      const timeStr = a.createdAt ? new Date(a.createdAt).toLocaleDateString('en-PK', {day:'numeric',month:'short',hour:'2-digit',minute:'2-digit'}) : '';
-
-      let pollHTML = '';
-      if (a.type === 'poll' && a.options) {
-        const voted = localStorage.getItem('poll_' + id);
-        const totalVotes = a.options.reduce((s, o) => s + (o.votes || 0), 0);
-        pollHTML = `<div class="poll-options">` + a.options.map((opt, i) => {
-          const pct = totalVotes > 0 ? Math.round((opt.votes || 0) / totalVotes * 100) : 0;
-          return `<div class="poll-opt ${voted == i ? 'voted' : ''}" onclick="votePoll('${id}', ${i})">
-            <div class="poll-bar" style="width:${voted ? pct : 0}%"></div>
-            <div class="poll-opt-text"><span>${opt.text}</span><span>${voted ? pct + '%' : ''}</span></div>
-          </div>`;
-        }).join('') + `</div>`;
-      }
-
-      list.innerHTML += `<div class="ann-card type-${a.type || 'announcement'}">
-        <span class="ann-badge ${badgeClass}">${typeLabel}</span>
-        <div class="ann-title">${a.title}</div>
-        <div class="ann-body">${a.body || ''}</div>
-        ${pollHTML}
-        <div class="ann-time">${timeStr}</div>
-      </div>`;
-    });
-  } catch(e) { console.log('Announcements error:', e); }
-}
-
-async function votePoll(annId, optIndex) {
-  if (localStorage.getItem('poll_' + annId)) { showToast("⚠️ Already voted!"); return; }
-  if (!window._db) return;
-  try {
-    const ref = window._db.collection('announcements').doc(annId);
-    const doc = await ref.get();
-    const opts = doc.data().options;
-    opts[optIndex].votes = (opts[optIndex].votes || 0) + 1;
-    await ref.update({ options: opts });
-    localStorage.setItem('poll_' + annId, optIndex);
-    loadAnnouncements();
-    showToast("✅ Vote recorded!");
-  } catch(e) { showToast("❌ Error: " + e.message); }
-}
-
-// ===== ANNOUNCEMENTS =====
-async function loadAnnouncements() {
   const list = document.getElementById('announcements-list');
   const section = document.getElementById('announcements-section');
   if (!list || !window._db) return;
   try {
-    const snap = await window._db.collection('announcements')
-      .orderBy('pinned', 'desc')
-      .orderBy('createdAt', 'desc')
-      .limit(10).get();
-    if (snap.empty) { section.style.display = 'none'; return; }
+    const snap = await window._getDocs(window._collection(window._db, 'announcements'));
+    const docs = [];
+    snap.forEach(d => docs.push({id: d.id, ...d.data()}));
+    docs.sort((a,b) => (b.pinned?1:0)-(a.pinned?1:0) || (b.createdAt||'').localeCompare(a.createdAt||''));
+    if (docs.length === 0) { section.style.display = 'none'; return; }
     section.style.display = 'block';
     list.innerHTML = '';
-    snap.forEach(doc => {
-      const a = doc.data();
-      list.innerHTML += buildAnnouncementCard(doc.id, a);
-    });
-  } catch(e) { section.style.display = 'none'; }
+    docs.forEach(a => { list.innerHTML += buildAnnouncementCard(a.id, a); });
+  } catch(e) { section.style.display = 'none'; console.log('Ann error:', e); }
 }
 
 function buildAnnouncementCard(id, a) {
@@ -1741,7 +1690,7 @@ function buildAnnouncementCard(id, a) {
       </div>
       ${a.pinned ? '<span class="ann-pin-badge">📌 Pinned</span>' : ''}
     </div>
-    <div class="ann-body">${a.message}</div>
+    <div class="ann-body">${a.message || ''}</div>
     ${pollHTML}
   </div>`;
 }
@@ -1756,8 +1705,7 @@ function buildPollHTML(id, a) {
     const count = votesArr[i] || 0;
     const pct = total > 0 ? Math.round((count / total) * 100) : 0;
     const isVoted = userVoted == i;
-    html += `
-    <div class="poll-option ${userVoted !== null ? 'voted' : ''}" onclick="${userVoted === null ? `votePoll('${id}', ${i}, ${opts.length})` : ''}">
+    html += `<div class="poll-option ${userVoted !== null ? 'voted' : ''}" onclick="${userVoted === null ? `votePoll('${id}', ${i}, ${opts.length})` : ''}">
       <div class="poll-bar-wrap">
         <div class="poll-label">${isVoted ? '✅ ' : ''}${opt}</div>
         ${userVoted !== null ? `<div class="poll-bar"><div class="poll-fill" style="width:${pct}%"></div></div>` : ''}
@@ -1770,21 +1718,25 @@ function buildPollHTML(id, a) {
 }
 
 async function votePoll(annId, optIndex, totalOpts) {
-  if (!window._currentUser) { showToast("❌ Login karo pehle!"); return; }
   const stored = localStorage.getItem('poll_' + annId);
   if (stored !== null) { showToast("⚠️ Already voted!"); return; }
   try {
-    const ref = window._db.collection('announcements').doc(annId);
-    const snap = await ref.get();
-    const data = snap.data();
-    const votes = data.votes || new Array(totalOpts).fill(0);
+    const ref = window._doc(window._db, 'announcements', annId);
+    const snap = await window._getDocs(window._collection(window._db, 'announcements'));
+    let docData = null;
+    snap.forEach(d => { if (d.id === annId) docData = d.data(); });
+    if (!docData) return;
+    const votes = docData.votes || new Array(totalOpts).fill(0);
     votes[optIndex] = (votes[optIndex] || 0) + 1;
-    await ref.update({ votes });
+    const { updateDoc } = await import("https://www.gstatic.com/firebasejs/10.7.1/firebase-firestore.js");
+    await updateDoc(ref, { votes });
     localStorage.setItem('poll_' + annId, optIndex);
     showToast("✅ Vote recorded!");
     loadAnnouncements();
   } catch(e) { showToast("❌ Error: " + e.message); }
 }
+
+
 
 function getTimeAgo(iso) {
   if (!iso) return '';
@@ -1813,7 +1765,7 @@ async function submitSupportRequest() {
   if (!name || !wa || !msg) { showToast("❌ Please fill all fields!"); return; }
 
   try {
-    await window._db.collection('supportRequests').add({
+    await window._addDoc(window._collection(window._db, 'supportRequests'), {
       name, whatsapp: wa, issueType: type, message: msg,
       status: 'pending', createdAt: new Date().toISOString()
     });
@@ -1830,7 +1782,6 @@ async function submitSupportRequest() {
 // Update home buttons on load
 document.addEventListener('DOMContentLoaded', () => {
   updateHomeButtons(false);
-  setTimeout(loadAnnouncements, 2000);
   setTimeout(loadAnnouncements, 2000);
 });
 </script>
