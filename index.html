@@ -157,44 +157,55 @@
   window.submitWithdraw = async () => {
     if (!currentProfile) return;
     const amount = parseInt(document.getElementById('withdraw-amount-input').value);
-    if (!amount || amount < 500) { showToast("❌ Minimum withdrawal is Rs 500!"); return; }
+    if (!amount || amount < 100) { showToast("❌ Minimum withdrawal is Rs 100!"); return; }
     if (amount > currentProfile.walletBalance) { showToast("❌ Insufficient balance!"); return; }
 
-    const newBalance = currentProfile.walletBalance - amount;
+    // Disable button to prevent double submit
+    const btn = document.querySelector('#withdraw-modal .btn-gold');
+    if (btn) { btn.disabled = true; btn.textContent = '⏳ Processing...'; }
 
-    // Save request to Firebase
-    await addDoc(collection(db, "withdrawalRequests"), {
-      playerUID: currentProfile.gameUID,
-      playerName: currentProfile.name,
-      playerWhatsapp: currentProfile.whatsapp,
-      paymentMethod: currentProfile.paymentMethod,
-      paymentAccount: currentProfile.paymentAccount,
-      amount,
-      status: "pending",
-      timestamp: serverTimestamp()
-    });
+    try {
+      const newBalance = currentProfile.walletBalance - amount;
 
-    // Deduct balance + save transaction
-    await db.collection('players').doc(currentUser.uid).update({ walletBalance: newBalance });
-    await addDoc(collection(db, "players", currentUser.uid, "transactions"), {
-      type: 'withdrawal',
-      description: `Withdrawal - ${currentProfile.paymentMethod}`,
-      amount: -amount,
-      createdAt: new Date().toISOString()
-    });
+      // Save request to Firebase
+      await addDoc(collection(db, "withdrawalRequests"), {
+        playerUID: currentProfile.gameUID,
+        playerName: currentProfile.name,
+        playerWhatsapp: currentProfile.whatsapp,
+        paymentMethod: currentProfile.paymentMethod,
+        paymentAccount: currentProfile.paymentAccount,
+        amount,
+        status: "pending",
+        timestamp: serverTimestamp()
+      });
 
-    // Update local profile
-    currentProfile.walletBalance = newBalance;
-    if (window._globalProfile) window._globalProfile.walletBalance = newBalance;
-    if (window._currentProfile) window._currentProfile.walletBalance = newBalance;
-    document.getElementById('wallet-balance').textContent = 'Rs ' + newBalance.toLocaleString();
+      // Deduct balance + save transaction
+      await updateDoc(doc(db, 'players', currentUser.uid), { walletBalance: newBalance });
+      await addDoc(collection(db, "players", currentUser.uid, "transactions"), {
+        type: 'withdrawal',
+        description: `Withdrawal - ${currentProfile.paymentMethod}`,
+        amount: -amount,
+        createdAt: new Date().toISOString()
+      });
 
-    // WhatsApp notification to owner
-    const msg = `🔔 *Withdrawal Request*%0APlayer: *${currentProfile.name}*%0AUID: *${currentProfile.gameUID}*%0AAmount: *Rs ${amount}*%0AMethod: *${currentProfile.paymentMethod}*%0AAccount: *${currentProfile.paymentAccount}*`;
-    window.open(`https://wa.me/${OWNER_WHATSAPP}?text=${msg}`, '_blank');
+      // Update local profile
+      currentProfile.walletBalance = newBalance;
+      if (window._globalProfile) window._globalProfile.walletBalance = newBalance;
+      if (window._currentProfile) window._currentProfile.walletBalance = newBalance;
+      document.getElementById('wallet-balance').textContent = 'Rs ' + newBalance.toLocaleString();
 
-    hideModal('withdraw-modal');
-    showModal('withdraw-success-modal');
+      // WhatsApp notification to owner
+      const msg = `🔔 *Withdrawal Request*%0APlayer: *${currentProfile.name}*%0AUID: *${currentProfile.gameUID}*%0AAmount: *Rs ${amount}*%0AMethod: *${currentProfile.paymentMethod}*%0AAccount: *${currentProfile.paymentAccount}*`;
+      window.open(`https://wa.me/${OWNER_WHATSAPP}?text=${msg}`, '_blank');
+
+      hideModal('withdraw-modal');
+      showModal('withdraw-success-modal');
+      document.getElementById('withdraw-amount-input').value = '';
+    } catch(e) {
+      showToast("❌ Error: " + e.message);
+    } finally {
+      if (btn) { btn.disabled = false; btn.textContent = '⬆️ SUBMIT WITHDRAWAL REQUEST'; }
+    }
   };
 
   // ============= TOURNAMENT JOIN =============
@@ -1555,10 +1566,10 @@ nav {
   <div class="modal">
     <div class="modal-handle"></div>
     <div class="modal-title">Withdraw Funds <span class="modal-close" onclick="hideModal('withdraw-modal')">✕</span></div>
-    <div class="notice">💡 Minimum withdrawal: <strong>Rs 500</strong><br><span id="withdraw-balance-note">Your balance: Rs 0</span></div>
+    <div class="notice">💡 Minimum withdrawal: <strong>Rs 100</strong><br><span id="withdraw-balance-note">Your balance: Rs 0</span></div>
     <div class="form-group">
       <label class="form-label">Amount to Withdraw</label>
-      <input type="number" class="form-input" id="withdraw-amount-input" placeholder="Min Rs 500" min="500">
+      <input type="number" class="form-input" id="withdraw-amount-input" placeholder="Min Rs 100" min="100">
     </div>
     <div class="form-note">⏰ Payment will be sent to your registered <strong id="withdraw-method-display">payment account</strong> within <strong>24 hours</strong>.</div>
     <button class="btn-gold" onclick="submitWithdraw()">⬆️ SUBMIT WITHDRAWAL REQUEST</button>
@@ -1612,25 +1623,20 @@ function showPage(p) {
 
 async function loadTransactions() {
   const txList = document.getElementById('tx-list');
-  if (!txList || !window._currentUser) return;
+  if (!txList || !currentUser) return;
   txList.innerHTML = '<div style="text-align:center;padding:20px;color:var(--text-dim)">Loading...</div>';
   try {
-    // Get without orderBy to avoid index errors on old data
-    const snap = await window._db
-      .collection('players').doc(window._currentUser.uid)
-      .collection('transactions')
-      .get();
+    const snap = await getDocs(collection(db, 'players', currentUser.uid, 'transactions'));
 
     if (snap.empty) {
       txList.innerHTML = '<div style="text-align:center;padding:30px;color:var(--text-dim);font-size:14px">No transactions yet.<br>Deposit to get started! 💪</div>';
       return;
     }
 
-    // Sort in JS — newest first, handle both createdAt and timestamp
+    // Sort in JS newest first — handle both createdAt string and serverTimestamp
     let txns = [];
     snap.forEach(doc => {
       const d = doc.data();
-      // Normalize date — could be createdAt string or timestamp serverTimestamp
       let sortKey = 0;
       if (d.createdAt) sortKey = new Date(d.createdAt).getTime();
       else if (d.timestamp && d.timestamp.toDate) sortKey = d.timestamp.toDate().getTime();
@@ -1648,8 +1654,6 @@ async function loadTransactions() {
         : tx.type === 'admin_update' ? '⚙️'
         : '💰';
       const iconClass = isPos ? 'in' : (tx.type === 'entry_fee' ? 'fee' : 'out');
-
-      // Handle both date formats
       let dateStr = '';
       if (tx.createdAt) dateStr = new Date(tx.createdAt).toLocaleDateString('en-PK', {day:'numeric', month:'short', hour:'2-digit', minute:'2-digit'});
       else if (tx.timestamp && tx.timestamp.toDate) dateStr = tx.timestamp.toDate().toLocaleDateString('en-PK', {day:'numeric', month:'short', hour:'2-digit', minute:'2-digit'});
