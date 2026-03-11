@@ -331,6 +331,21 @@
       const tournaments = [];
       snap.forEach(d => tournaments.push({ id: d.id, ...d.data() }));
 
+      // Auto-clear activeTournament if that tournament was deleted
+      const p = window._currentProfile || window._globalProfile;
+      if (p && p.activeTournament) {
+        const stillExists = tournaments.some(t => t.id === p.activeTournament);
+        if (!stillExists && currentUser) {
+          await updateDoc(doc(db, "players", currentUser.uid), {
+            activeTournament: null,
+            activeTournamentName: null
+          });
+          if (window._currentProfile) { window._currentProfile.activeTournament = null; window._currentProfile.activeTournamentName = null; }
+          if (window._globalProfile) { window._globalProfile.activeTournament = null; window._globalProfile.activeTournamentName = null; }
+          if (currentProfile) { currentProfile.activeTournament = null; currentProfile.activeTournamentName = null; }
+        }
+      }
+
       if (tournaments.length === 0) {
         container.innerHTML = '<div style="text-align:center;padding:40px;color:var(--text-dim)"><div style="font-size:40px;margin-bottom:12px">🏆</div><div style="font-size:16px;font-weight:600;margin-bottom:8px">Koi tournament nahi abhi</div><div style="font-size:13px">Jaldi aa rahe hain! Wapas check karo.</div></div>';
         return;
