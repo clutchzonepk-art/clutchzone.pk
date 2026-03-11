@@ -281,17 +281,17 @@ body{font-family:'Exo 2',sans-serif;background:var(--dark);color:var(--text);min
     <div style="font-size:13px;color:var(--dim);margin-bottom:8px;font-weight:600">🥇 TOP 3 WINNERS</div>
     <div class="fg">
       <label class="fl">🥇 1st Place — Player UID</label>
-      <input type="text" class="fi" id="prize-uid1" placeholder="Player Game UID">
+      <select class="fi" id="prize-uid1"><option value="">-- Open Prizes to load players --</option></select>
       <div style="font-size:12px;color:var(--gold);margin-top:4px">Prize: Rs <span id="prize-amt1">600</span></div>
     </div>
     <div class="fg">
       <label class="fl">🥈 2nd Place — Player UID</label>
-      <input type="text" class="fi" id="prize-uid2" placeholder="Player Game UID">
+      <select class="fi" id="prize-uid2"><option value="">-- Open Prizes to load players --</option></select>
       <div style="font-size:12px;color:var(--gold);margin-top:4px">Prize: Rs <span id="prize-amt2">400</span></div>
     </div>
     <div class="fg">
       <label class="fl">🥉 3rd Place — Player UID</label>
-      <input type="text" class="fi" id="prize-uid3" placeholder="Player Game UID">
+      <select class="fi" id="prize-uid3"><option value="">-- Open Prizes to load players --</option></select>
       <div style="font-size:12px;color:var(--gold);margin-top:4px">Prize: Rs <span id="prize-amt3">200</span></div>
     </div>
 
@@ -853,14 +853,37 @@ async function loadAnnouncements() {
     document.getElementById('prize-amt2').textContent = p2;
     document.getElementById('prize-amt3').textContent = p3;
     document.getElementById('prize-kill-rate').textContent = kill;
-    document.getElementById('prize-uid1').value = '';
-    document.getElementById('prize-uid2').value = '';
-    document.getElementById('prize-uid3').value = '';
+    document.getElementById('kill-bonus-list').innerHTML = '';
 
-    // Load participants into datalist
-    const snap = await getDocs(collection(db, 'tournaments', tid, 'participants'));
-    const killList = document.getElementById('kill-bonus-list');
-    killList.innerHTML = '';
+    // Load participants into dropdowns
+    try {
+      const snap = await getDocs(collection(db, 'tournaments', tid, 'participants'));
+      const opts = ['<option value="">-- Select Player --</option>'];
+      snap.forEach(d => {
+        const p = d.data();
+        opts.push(`<option value="${p.playerUID}">${p.playerName} (${p.playerUID})</option>`);
+      });
+      const optHtml = opts.join('');
+      ['prize-uid1','prize-uid2','prize-uid3'].forEach(elId => {
+        const el = document.getElementById(elId);
+        if (el && el.tagName === 'INPUT') {
+          const sel = document.createElement('select');
+          sel.className = 'fi';
+          sel.id = elId;
+          sel.innerHTML = optHtml;
+          el.parentNode.replaceChild(sel, el);
+        } else if (el) {
+          el.innerHTML = optHtml;
+          el.value = '';
+        }
+      });
+    } catch(e) {
+      // fallback to blank text inputs
+      ['prize-uid1','prize-uid2','prize-uid3'].forEach(elId => {
+        const el = document.getElementById(elId);
+        if (el) el.value = '';
+      });
+    }
     showModal('prize-modal');
   };
 
@@ -919,10 +942,15 @@ async function loadAnnouncements() {
         const player = playerMap[p.uid];
         if (!player) { failed.push(p.uid + ' (not found)'); continue; }
         const newBal = (player.walletBalance || 0) + p.amt;
-        await updateDoc(doc(db, 'players', player.id), {
+        const updateData = {
           walletBalance: newBal,
           totalEarnings: (player.totalEarnings || 0) + p.amt
-        });
+        };
+        // Increment tournamentsWon only for 1st place prize
+        if (p.label.includes('1st Place')) {
+          updateData.tournamentsWon = (player.tournamentsWon || 0) + 1;
+        }
+        await updateDoc(doc(db, 'players', player.id), updateData);
         await addDoc(collection(db, 'players', player.id, 'transactions'), {
           type: p.type,
           description: p.label,
