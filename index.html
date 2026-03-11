@@ -206,6 +206,14 @@
       joinedAt: serverTimestamp()
     });
 
+    // Increment joinedCount in tournament doc
+    const tRef = doc(db, "tournaments", tournamentId);
+    const tSnap = await getDoc(tRef);
+    if (tSnap.exists()) {
+      const currentCount = tSnap.data().joinedCount || 0;
+      await updateDoc(tRef, { joinedCount: currentCount + 1 });
+    }
+
     // Add transaction
     await addDoc(collection(db, "players", currentUser.uid, "transactions"), {
       type: "entry_fee",
