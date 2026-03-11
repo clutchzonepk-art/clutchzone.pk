@@ -677,7 +677,7 @@ async function createAnnouncement() {
   }
 
   try {
-    await firebase.firestore().collection('announcements').add(data);
+    await addDoc(collection(db, 'announcements'), data);
     showToast("✅ Announcement posted!");
     hideModal('ann-modal');
     document.getElementById('ann-title').value = '';
@@ -693,29 +693,31 @@ async function loadAnnouncements() {
   if (!list) return;
   list.innerHTML = '<div style="text-align:center;padding:20px;color:var(--dim)">Loading...</div>';
   try {
-    const snap = await firebase.firestore().collection('announcements').orderBy('createdAt','desc').get();
-    if (snap.empty) { list.innerHTML = '<div style="text-align:center;padding:20px;color:var(--dim)">No announcements yet.</div>'; return; }
+    const snap = await getDocs(collection(db, 'announcements'));
+    const docs = [];
+    snap.forEach(d => docs.push({id: d.id, ...d.data()}));
+    docs.sort((a,b) => (b.pinned?1:0) - (a.pinned?1:0) || b.createdAt?.localeCompare(a.createdAt||''));
+    if (docs.length === 0) { list.innerHTML = '<div style="text-align:center;padding:20px;color:var(--dim)">No announcements yet.</div>'; return; }
     list.innerHTML = '';
-    snap.forEach(doc => {
-      const a = doc.data();
+    docs.forEach(a => {
       const timeStr = a.createdAt ? new Date(a.createdAt).toLocaleDateString('en-PK',{day:'numeric',month:'short',hour:'2-digit',minute:'2-digit'}) : '';
       const typeBadge = a.type === 'poll' ? '🔵 Poll' : a.type === 'update' ? '🟡 Update' : '🔴 Announcement';
       let pollInfo = '';
       if (a.type === 'poll' && a.options) {
-        const total = a.options.reduce((s,o)=>s+(o.votes||0),0);
+        const total = (a.votes||[]).reduce((s,v)=>s+(v||0),0);
         pollInfo = '<div style="margin-top:8px;font-size:12px;color:var(--dim)">' +
-          a.options.map(o=>`${o.text}: <strong>${o.votes||0}</strong>`).join(' | ') +
+          a.options.map((o,i)=>`${o}: <strong>${a.votes?.[i]||0}</strong>`).join(' | ') +
           ` | Total: <strong>${total}</strong></div>`;
       }
-      list.innerHTML += `<div style="background:var(--card);border:1px solid var(--border);border-radius:10px;padding:14px;margin-bottom:10px">
+      list.innerHTML += `<div style="background:var(--card);border:1px solid ${a.pinned?'var(--gold)':'var(--border)'};border-radius:10px;padding:14px;margin-bottom:10px">
         <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px">
-          <span style="font-size:12px;color:var(--gold)">${typeBadge}</span>
+          <span style="font-size:12px;color:var(--gold)">${a.emoji||'📢'} ${typeBadge} ${a.pinned?'📌':''}</span>
           <span style="font-size:11px;color:var(--dim)">${timeStr}</span>
         </div>
         <div style="font-weight:700;margin-bottom:4px">${a.title}</div>
-        <div style="font-size:13px;color:var(--dim)">${a.body||''}</div>
+        <div style="font-size:13px;color:var(--dim)">${a.message||''}</div>
         ${pollInfo}
-        <button class="abtn" style="margin-top:10px;background:#c0392b;color:#fff" onclick="deleteAnnouncement('${doc.id}')">🗑️ Delete</button>
+        <button class="abtn" style="margin-top:10px;background:#c0392b;color:#fff" onclick="deleteAnnouncement('${a.id}')">🗑️ Delete</button>
       </div>`;
     });
   } catch(e) { list.innerHTML = `<div style="color:red">❌ Error: ${e.message}</div>`; }
@@ -723,7 +725,7 @@ async function loadAnnouncements() {
 async function deleteAnnouncement(id) {
   if (!confirm("Delete this announcement?")) return;
   try {
-    await firebase.firestore().collection('announcements').doc(id).delete();
+    await deleteDoc(doc(db, 'announcements', id));
     showToast("✅ Deleted!");
     loadAnnouncements();
   } catch(e) { showToast("❌ Error: " + e.message); }
