@@ -75,6 +75,7 @@
 
   onAuthStateChanged(auth, async (user) => {
     currentUser = user;
+    window._currentUser = user;
     if (user) {
       const snap = await getDoc(doc(db, "players", user.uid));
       if (snap.exists()) {
@@ -448,7 +449,11 @@
     }
   };
 
-  window._firebaseReady = { joinTournament, loadLeaderboard };
+  async function updateProfile(uid, data) {
+    await updateDoc(doc(db, 'players', uid), data);
+  }
+
+  window._firebaseReady = { joinTournament, loadLeaderboard, updateProfile };
 
   // Expose loadTransactions with correct scope
   window.loadTransactions = async function() {
@@ -1792,12 +1797,58 @@ function openEditProfileModal() {
   document.getElementById('edit-whatsapp-input').value = p.whatsapp || '';
   document.getElementById('edit-method-input').value = p.paymentMethod || 'JazzCash';
   document.getElementById('edit-account-input').value = p.paymentAccount || '';
+  document.getElementById('edit-uid-display').textContent = 'UID: ' + (p.gameUID || '—');
+  document.getElementById('edit-email-display').textContent = 'Email: ' + (p.email || '—');
 }
 
 async function saveEditProfile() {
-  showToast("💾 Saving changes...");
-  hideModal('edit-profile-modal');
-  showToast("✅ Profile updated!");
+  const name = document.getElementById('edit-name-input').value.trim();
+  const whatsapp = document.getElementById('edit-whatsapp-input').value.trim();
+  const paymentMethod = document.getElementById('edit-method-input').value;
+  const paymentAccount = document.getElementById('edit-account-input').value.trim();
+
+  if (!name) { showToast("❌ Name nahi ho sakta empty!"); return; }
+  if (!whatsapp) { showToast("❌ WhatsApp number required!"); return; }
+
+  const btn = document.querySelector('#edit-profile-modal .btn-gold');
+  if (btn) { btn.disabled = true; btn.textContent = '⏳ Saving...'; }
+
+  try {
+    const p = window._currentProfile || window._globalProfile;
+    if (!p || !window._firebaseReady) { showToast("❌ Login required!"); return; }
+
+    // Get currentUser from window
+    const uid = window._currentUser ? window._currentUser.uid : null;
+    if (!uid) { showToast("❌ Not logged in!"); return; }
+
+    // Save to Firebase
+    await window._firebaseReady.updateProfile(uid, { name, whatsapp, paymentMethod, paymentAccount });
+
+    // Update local profile
+    p.name = name;
+    p.whatsapp = whatsapp;
+    p.paymentMethod = paymentMethod;
+    p.paymentAccount = paymentAccount;
+    if (window._currentProfile) {
+      window._currentProfile.name = name;
+      window._currentProfile.whatsapp = whatsapp;
+      window._currentProfile.paymentMethod = paymentMethod;
+      window._currentProfile.paymentAccount = paymentAccount;
+    }
+
+    // Update profile display
+    const nameEl = document.getElementById('profile-name');
+    const methodEl = document.getElementById('profile-payment');
+    if (nameEl) nameEl.textContent = name;
+    if (methodEl) methodEl.textContent = paymentMethod + ': ' + paymentAccount;
+
+    hideModal('edit-profile-modal');
+    showToast("✅ Profile updated!");
+  } catch(e) {
+    showToast("❌ Error: " + e.message);
+  } finally {
+    if (btn) { btn.disabled = false; btn.textContent = '💾 SAVE CHANGES'; }
+  }
 }
 
 function switchLbTab(btn, period) {
@@ -1938,11 +1989,14 @@ document.addEventListener('DOMContentLoaded', () => {
   <div class="modal">
     <div class="modal-handle"></div>
     <div class="modal-title">Edit Profile <span class="modal-close" onclick="hideModal('edit-profile-modal')">✕</span></div>
+    <div style="background:rgba(245,166,35,0.08);border:1px solid rgba(245,166,35,0.2);border-radius:8px;padding:10px 12px;margin-bottom:14px;font-size:12px;color:var(--text-dim)">
+      🔒 <strong style="color:var(--gold)">Cannot be changed:</strong><br>
+      <span id="edit-uid-display">UID: —</span> &nbsp;|&nbsp; <span id="edit-email-display">Email: —</span>
+    </div>
     <div class="form-group">
       <label class="form-label">Display Name</label>
       <input type="text" class="form-input" id="edit-name-input" placeholder="Your name">
     </div>
-    <div class="form-note">⚠️ <strong>Game UID cannot be changed</strong> after registration.</div>
     <div class="form-group">
       <label class="form-label">WhatsApp Number</label>
       <input type="tel" class="form-input" id="edit-whatsapp-input" placeholder="03XX-XXXXXXX">
