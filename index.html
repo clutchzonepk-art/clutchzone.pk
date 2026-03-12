@@ -234,6 +234,7 @@
   };
 
   // ============= TOURNAMENT JOIN =============
+  // ============= TOURNAMENT JOIN =============
   window.joinTournament = async (tournamentId, entryFee, tournamentName) => {
     const profile = currentProfile || window._globalProfile;
     if (!profile) { showToast("❌ Please login first!"); showModal('login-prompt-modal'); return; }
@@ -241,37 +242,65 @@
     const confirmBtn = document.getElementById('jm-confirm-btn');
     if (confirmBtn) { confirmBtn.disabled = true; confirmBtn.textContent = '⏳ Processing...'; }
 
-    // ─────────────────────────────────────────────────────────────────
-    // CRITICAL FIX (mobile): Open a BLANK window right now (user gesture)
-    // so the browser won't block it. We fill it with the WhatsApp URL
-    // AFTER all Firebase writes finish — page stays active throughout.
-    // ─────────────────────────────────────────────────────────────────
+    // Open blank popup NOW (inside user-click event) — browser won't block this.
+    // We redirect it to WhatsApp AFTER all Firebase writes are done.
     const waWindow = window.open('', '_blank');
 
-    let joinSucceeded = false;
     try {
+      // ── STEP 1: Check if player already in participants ──
+      const existingParts = await getDocs(collection(db, "tournaments", tournamentId, "participants"));
+      let alreadyJoined = false;
+      let existingTxnCount = 0;
+      existingParts.forEach(d => { if (d.data().playerUID === profile.gameUID) alreadyJoined = true; });
+
+      if (alreadyJoined) {
+        // ── REPAIR: Player joined before (old buggy code) but Firebase is incomplete ──
+        // Force-write activeTournament to Firebase so it survives page refresh
+        const repairData = {};
+        if (!profile.activeTournament) {
+          repairData.activeTournament    = tournamentId;
+          repairData.activeTournamentName = tournamentName;
+        }
+        // Check if entry-fee transaction exists
+        const txSnap = await getDocs(collection(db, "players", currentUser.uid, "transactions"));
+        txSnap.forEach(d => { if (d.data().type === 'entry_fee' && d.data().description && d.data().description.includes(tournamentName)) existingTxnCount++; });
+
+        if (Object.keys(repairData).length > 0) {
+          await updateDoc(doc(db, "players", currentUser.uid), repairData);
+        }
+        // Create missing transaction if none exists for this tournament
+        if (existingTxnCount === 0) {
+          await addDoc(collection(db, "players", currentUser.uid, "transactions"), {
+            type: "entry_fee",
+            description: `Entry Fee - ${tournamentName}`,
+            amount: -entryFee,
+            createdAt: new Date().toISOString()
+          });
+        }
+
+        // Update local profile
+        [currentProfile, window._globalProfile, window._currentProfile].forEach(p => {
+          if (p) { p.activeTournament = tournamentId; p.activeTournamentName = tournamentName; }
+        });
+        refreshWalletPage();
+        refreshTournamentButtons();
+        hideModal('join-confirm-modal');
+        if (confirmBtn) { confirmBtn.disabled = false; confirmBtn.textContent = '🎮 CONFIRM & JOIN'; }
+        if (waWindow) waWindow.close();
+        showToast("✅ Already joined! Data repaired.");
+        return;
+      }
+
+      // ── STEP 2: Balance check ──
       if (profile.walletBalance < entryFee) {
         showToast("❌ Insufficient balance! Please deposit first.");
         if (waWindow) waWindow.close();
         return;
       }
 
-      // Duplicate check — prevent double entry
-      const existingParts = await getDocs(collection(db, "tournaments", tournamentId, "participants"));
-      let alreadyJoined = false;
-      existingParts.forEach(d => { if (d.data().playerUID === profile.gameUID) alreadyJoined = true; });
-      if (alreadyJoined) {
-        showToast("✅ Aap already joined hain is tournament mein!");
-        if (waWindow) waWindow.close();
-        hideModal('join-confirm-modal');
-        return;
-      }
-
       const newBalance = profile.walletBalance - entryFee;
 
-      // ── All Firebase writes happen BEFORE WhatsApp redirect ──
-
-      // 1. Deduct fee + set activeTournament + increment tournamentsPlayed in ONE call
+      // ── STEP 3: Write to player doc — deduct + lock tournament (ONE atomic call) ──
       await updateDoc(doc(db, "players", currentUser.uid), {
         walletBalance: newBalance,
         tournamentsPlayed: increment(1),
@@ -279,7 +308,7 @@
         activeTournamentName: tournamentName
       });
 
-      // 2. Add participant
+      // ── STEP 4: Add to participants subcollection ──
       await addDoc(collection(db, "tournaments", tournamentId, "participants"), {
         playerUID: profile.gameUID,
         playerName: profile.name,
@@ -287,10 +316,10 @@
         joinedAt: serverTimestamp()
       });
 
-      // 3. Increment slot count atomically (no race condition)
+      // ── STEP 5: Increment slot count atomically ──
       await updateDoc(doc(db, "tournaments", tournamentId), { joinedCount: increment(1) });
 
-      // 4. Transaction record — uses createdAt so wallet history shows it
+      // ── STEP 6: Save transaction record (createdAt so wallet history shows it) ──
       await addDoc(collection(db, "players", currentUser.uid, "transactions"), {
         type: "entry_fee",
         description: `Entry Fee - ${tournamentName}`,
@@ -298,7 +327,7 @@
         createdAt: new Date().toISOString()
       });
 
-      // ── Update local profile objects ──
+      // ── All Firebase writes done. Update local profile & UI ──
       [currentProfile, window._globalProfile, window._currentProfile].forEach(p => {
         if (!p) return;
         p.walletBalance = newBalance;
@@ -307,28 +336,18 @@
         p.tournamentsPlayed = (p.tournamentsPlayed || 0) + 1;
       });
 
-      // ── Update UI immediately — don't wait for loadTournaments ──
       refreshWalletPage();
-
-      // Directly turn THIS button green right now
-      const joinBtn = document.querySelector(`[data-tid="${tournamentId}"]`);
-      if (joinBtn) {
-        joinBtn.textContent = '✅ JOINED';
-        joinBtn.disabled = true;
-        joinBtn.style.background = 'rgba(46,204,113,0.2)';
-        joinBtn.style.color = 'var(--green)';
-        joinBtn.style.border = '1px solid rgba(46,204,113,0.4)';
-        joinBtn.onclick = null;
-      }
-      // Also lock other tournament buttons
       refreshTournamentButtons();
-
       hideModal('join-confirm-modal');
       showToast("🎮 Joined! Room ID will be sent on WhatsApp before match!");
-      joinSucceeded = true;
 
-      // ── NOW redirect pre-opened window to WhatsApp ──
-      // All Firebase writes are done — page is safe to go to background
+      // ── Reload tournament cards so slot count updates (e.g. 1/50 → 2/50) ──
+      if (window.loadTournaments) {
+        setTimeout(() => { if (window.loadTournaments) window.loadTournaments(); }, 800);
+      }
+
+      // ── STEP 7: Redirect pre-opened window to WhatsApp ──
+      // All writes are 100% done before this — page will not be suspended until now
       const ownerMsg = `🎮 *New Tournament Join!*%0ATournament: *${tournamentName}*%0APlayer: *${profile.name}*%0AUID: *${profile.gameUID}*%0AWhatsApp: *${profile.whatsapp}*%0AEntry Fee: *Rs ${entryFee}*`;
       if (waWindow && !waWindow.closed) {
         waWindow.location.href = `https://wa.me/${OWNER_WHATSAPP}?text=${ownerMsg}`;
@@ -338,14 +357,9 @@
 
     } catch(e) {
       showToast("❌ Error: " + e.message);
-      console.error("Join error:", e);
+      console.error("joinTournament error:", e);
       if (waWindow && !waWindow.closed) waWindow.close();
-    } finally {
-      // Only re-enable button if join failed
-      if (!joinSucceeded && confirmBtn) {
-        confirmBtn.disabled = false;
-        confirmBtn.textContent = '🎮 CONFIRM & JOIN';
-      }
+      if (confirmBtn) { confirmBtn.disabled = false; confirmBtn.textContent = '🎮 CONFIRM & JOIN'; }
     }
   };
 
@@ -483,8 +497,27 @@
         return;
       }
 
+      // ── SLOTS FIX: Fetch real participant count for each tournament ──
+      // joinedCount can get out of sync — counting actual docs is always accurate
+      const countPromises = tournaments.map(t =>
+        getDocs(collection(db, "tournaments", t.id, "participants"))
+          .then(s => ({ id: t.id, count: s.size }))
+          .catch(() => ({ id: t.id, count: t.joinedCount || 0 }))
+      );
+      const realCounts = await Promise.all(countPromises);
+      const countMap = {};
+      realCounts.forEach(r => { countMap[r.id] = r.count; });
+
+      // Also fix any joinedCount that's wrong in Firebase (repair silently)
+      tournaments.forEach(t => {
+        const real = countMap[t.id];
+        if (real !== undefined && real !== (t.joinedCount || 0)) {
+          updateDoc(doc(db, "tournaments", t.id), { joinedCount: real }).catch(() => {});
+        }
+      });
+
       container.innerHTML = tournaments.map(t => {
-        const joined = t.joinedCount || 0;
+        const joined = countMap[t.id] !== undefined ? countMap[t.id] : (t.joinedCount || 0);
         const max = t.maxPlayers || 50;
         const pct = Math.min(100, Math.round((joined / max) * 100));
         const status = t.status || 'open';
