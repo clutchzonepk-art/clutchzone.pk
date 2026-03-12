@@ -617,11 +617,13 @@
       txns.forEach(tx => {
         const isPos = tx.amount > 0;
         const isPending = tx.type === 'withdrawal_pending';
+        const isRejected = tx.type === 'withdrawal_rejected';
         const icon = tx.type === 'deposit' ? '⬇️'
           : tx.type === 'prize' ? '🏆'
           : tx.type === 'entry_fee' ? '🎮'
           : tx.type === 'withdrawal' ? '🏧'
-          : (tx.type === 'withdrawal_pending') ? '⏳'
+          : tx.type === 'withdrawal_pending' ? '⏳'
+          : tx.type === 'withdrawal_rejected' ? '❌'
           : tx.type === 'admin_update' ? '⚙️' : '💰';
         const iconClass = isPos ? 'in' : (tx.type === 'entry_fee' ? 'fee' : 'out');
         let dateStr = '';
@@ -629,10 +631,12 @@
         else if (tx.timestamp && tx.timestamp.toDate) dateStr = tx.timestamp.toDate().toLocaleDateString('en-PK', {day:'numeric', month:'short', hour:'2-digit', minute:'2-digit'});
         const statusHtml = isPending
           ? `<div class="tx-status" style="color:#F5A623">⏳ Pending</div>`
+          : isRejected
+          ? `<div class="tx-status" style="color:#E74C3C">❌ Rejected</div>`
           : `<div class="tx-status">✅ Done</div>`;
-        // For pending withdrawal, show amount in gold (not red) since balance not deducted yet
-        const amtClass = isPending ? '' : (isPos ? 'pos' : 'neg');
-        const amtStyle = isPending ? 'color:var(--gold)' : '';
+        // Pending = gold (not deducted), Rejected = dim strikethrough, Approved = normal red
+        const amtClass = (isPending || isRejected) ? '' : (isPos ? 'pos' : 'neg');
+        const amtStyle = isPending ? 'color:var(--gold)' : isRejected ? 'color:var(--text-dim);text-decoration:line-through' : '';
         txList.innerHTML += `
         <div class="tx-item">
           <div class="tx-icon ${iconClass}">${icon}</div>
