@@ -720,18 +720,17 @@ body{font-family:'Exo 2',sans-serif;background:var(--dark);color:var(--text);min
     if (btn) { btn.disabled = true; btn.textContent = '⏳ Approving...'; }
 
     try {
-      // 1. Get the withdrawal request to find playerFirebaseUID
+      // 1. Get the withdrawal request
       const wSnap = await getDocs(collection(db, 'withdrawalRequests'));
       let wData = null;
       wSnap.forEach(d => { if (d.id === wid) wData = { id: d.id, ...d.data() }; });
 
-      // 2. Find player by gameUID to get Firebase UID
+      // 2. Find player
       const pSnap = await getDocs(collection(db, 'players'));
       let playerDoc = null;
       pSnap.forEach(d => {
-        if (d.data().gameUID === (wData && wData.playerUID)) playerDoc = { id: d.id, ...d.data() };
-        // Also match by playerFirebaseUID if saved
         if (wData && wData.playerFirebaseUID && d.id === wData.playerFirebaseUID) playerDoc = { id: d.id, ...d.data() };
+        else if (d.data().gameUID === (wData && wData.playerUID)) playerDoc = { id: d.id, ...d.data() };
       });
 
       if (!playerDoc) {
@@ -740,12 +739,21 @@ body{font-family:'Exo 2',sans-serif;background:var(--dark);color:var(--text);min
         return;
       }
 
-      const newBal = Math.max(0, (playerDoc.walletBalance || 0) - amt);
+      // 3. Find and DELETE the withdrawal_pending transaction from player history
+      const txSnap = await getDocs(collection(db, 'players', playerDoc.id, 'transactions'));
+      const deletePromises = [];
+      txSnap.forEach(d => {
+        if (d.data().type === 'withdrawal_pending' && Math.abs(d.data().amount) === amt) {
+          deletePromises.push(deleteDoc(doc(db, 'players', playerDoc.id, 'transactions', d.id)));
+        }
+      });
+      if (deletePromises.length > 0) await Promise.all(deletePromises);
 
-      // 3. Deduct balance from player
+      // 4. Deduct balance
+      const newBal = Math.max(0, (playerDoc.walletBalance || 0) - amt);
       await updateDoc(doc(db, 'players', playerDoc.id), { walletBalance: newBal });
 
-      // 4. Save final approved transaction in player's history
+      // 5. Add APPROVED transaction (replaces pending one)
       await addDoc(collection(db, 'players', playerDoc.id, 'transactions'), {
         type: 'withdrawal',
         description: 'Withdrawal Approved - ' + method,
@@ -753,14 +761,14 @@ body{font-family:'Exo 2',sans-serif;background:var(--dark);color:var(--text);min
         createdAt: new Date().toISOString()
       });
 
-      // 5. Mark request as approved
+      // 6. Mark request as approved
       await updateDoc(doc(db, 'withdrawalRequests', wid), {
         status: 'approved',
         approvedAt: serverTimestamp(),
         newBalance: newBal
       });
 
-      // 6. Send WhatsApp notification to player
+      // 7. WhatsApp to player
       const msg = encodeURIComponent(`✅ *Clutch Zone Withdrawal Approved!*\nHi *${name}*!\nAapka withdrawal *Rs ${amt}* process ho gaya.\nAccount: *${method}* - *${acc}*\nShukriya! 🎮`);
       window.open('https://wa.me/92' + wa + '?text=' + msg, '_blank');
 
@@ -776,14 +784,41 @@ body{font-family:'Exo 2',sans-serif;background:var(--dark);color:var(--text);min
   window.rejectW = async (wid, name) => {
     if (!confirm(name + ' ki request reject karni hai?')) return;
     try {
-      // Get request details for WhatsApp notification
       const wSnap = await getDocs(collection(db, 'withdrawalRequests'));
       let wData = null;
       wSnap.forEach(d => { if (d.id === wid) wData = { id: d.id, ...d.data() }; });
 
+      // Find player to delete pending transaction
+      const pSnap = await getDocs(collection(db, 'players'));
+      let playerDoc = null;
+      pSnap.forEach(d => {
+        if (wData && wData.playerFirebaseUID && d.id === wData.playerFirebaseUID) playerDoc = { id: d.id, ...d.data() };
+        else if (d.data().gameUID === (wData && wData.playerUID)) playerDoc = { id: d.id, ...d.data() };
+      });
+
+      // Delete the withdrawal_pending transaction from player history
+      if (playerDoc) {
+        const txSnap = await getDocs(collection(db, 'players', playerDoc.id, 'transactions'));
+        const deletePromises = [];
+        txSnap.forEach(d => {
+          if (d.data().type === 'withdrawal_pending' && Math.abs(d.data().amount) === (wData ? wData.amount : 0)) {
+            deletePromises.push(deleteDoc(doc(db, 'players', playerDoc.id, 'transactions', d.id)));
+          }
+        });
+        if (deletePromises.length > 0) await Promise.all(deletePromises);
+
+        // Add REJECTED transaction so player knows what happened
+        await addDoc(collection(db, 'players', playerDoc.id, 'transactions'), {
+          type: 'withdrawal_rejected',
+          description: 'Withdrawal Rejected - ' + (wData ? wData.paymentMethod || 'Request' : 'Request'),
+          amount: -(wData ? wData.amount : 0),
+          createdAt: new Date().toISOString()
+        });
+      }
+
       await updateDoc(doc(db, 'withdrawalRequests', wid), { status: 'rejected', rejectedAt: serverTimestamp() });
 
-      // Notify player on WhatsApp about rejection
+      // Notify player on WhatsApp
       if (wData && wData.playerWhatsapp) {
         const waNum = wData.playerWhatsapp.replace(/^0/, '').replace(/\D/g, '');
         const msg = encodeURIComponent(`❌ *Clutch Zone Withdrawal Rejected*\nHi *${name}*!\nAapki withdrawal request *Rs ${wData.amount}* reject ho gayi.\nKisi maslay k liye WhatsApp karo: 03270617401`);
