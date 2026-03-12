@@ -373,7 +373,7 @@ body{font-family:'Exo 2',sans-serif;background:var(--dark);color:var(--text);min
 <script type="module">
   import { initializeApp } from "https://www.gstatic.com/firebasejs/10.7.1/firebase-app.js";
   import { getAuth, signInWithPopup, GoogleAuthProvider, signOut, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/10.7.1/firebase-auth.js";
-  import { getFirestore, doc, collection, addDoc, getDocs, updateDoc, deleteDoc, serverTimestamp } from "https://www.gstatic.com/firebasejs/10.7.1/firebase-firestore.js";
+  import { getFirestore, doc, collection, addDoc, getDocs, updateDoc, deleteDoc, serverTimestamp, increment } from "https://www.gstatic.com/firebasejs/10.7.1/firebase-firestore.js";
 
   const firebaseConfig = {
     apiKey: "AIzaSyAtzCy0CzlheMJJhGCdHdwGg9CDP6KQQg4",
@@ -617,18 +617,20 @@ body{font-family:'Exo 2',sans-serif;background:var(--dark);color:var(--text);min
       killPrize: parseInt(document.getElementById('t-kill').value) || 20,
       status: document.getElementById('t-status').value,
       mode: 'Solo BR',
-      joinedCount: 0,
       updatedAt: serverTimestamp()
+      // BUG FIX 9: joinedCount is NOT included here — editing must never reset the player count!
     };
 
     const tid = document.getElementById('t-id').value;
     try {
       if (tid) {
+        // EDIT: never touch joinedCount
         await updateDoc(doc(db,'tournaments',tid), data);
         showToast('✅ Tournament update ho gaya!');
       } else {
-        data.createdAt = serverTimestamp();
+        // CREATE: start at 0
         data.joinedCount = 0;
+        data.createdAt = serverTimestamp();
         await addDoc(collection(db,'tournaments'), data);
         showToast('✅ Tournament create ho gaya!');
       }
@@ -649,6 +651,19 @@ body{font-family:'Exo 2',sans-serif;background:var(--dark);color:var(--text);min
 
   window.deleteT = async (tid, name) => {
     if (!confirm('Delete "' + name + '"? Yeh wapis nahi aayega!')) return;
+
+    // BUG FIX 10: Clear activeTournament from all players who were in this tournament
+    try {
+      const playersSnap = await getDocs(collection(db, 'players'));
+      const batch = [];
+      playersSnap.forEach(d => {
+        if (d.data().activeTournament === tid) {
+          batch.push(updateDoc(doc(db, 'players', d.id), { activeTournament: null, activeTournamentName: null }));
+        }
+      });
+      if (batch.length > 0) await Promise.all(batch);
+    } catch(e) { console.warn('Could not clear player activeTournament:', e.message); }
+
     await deleteDoc(doc(db,'tournaments',tid));
     showToast('🗑️ Tournament delete ho gaya!');
     await loadAll();
@@ -996,6 +1011,21 @@ async function loadAnnouncements() {
       let msg = '✅ ' + success + ' prizes distributed!';
       if (failed.length) msg += ' ❌ Not found: ' + failed.join(', ');
       showToast(msg);
+
+      // BUG FIX 11: Clear activeTournament from all participants so they can join next tournament
+      try {
+        const partsSnap = await getDocs(collection(db, 'tournaments', _prizeTid, 'participants'));
+        const clearBatch = [];
+        partsSnap.forEach(d => {
+          const pUID = d.data().playerUID;
+          const player = playerMap[pUID];
+          if (player) {
+            clearBatch.push(updateDoc(doc(db, 'players', player.id), { activeTournament: null, activeTournamentName: null }));
+          }
+        });
+        if (clearBatch.length > 0) await Promise.all(clearBatch);
+      } catch(e) { console.warn('Could not clear activeTournament after prizes:', e.message); }
+
       await loadAll();
     } catch(e) {
       showToast('❌ Error: ' + e.message);
