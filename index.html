@@ -16,7 +16,7 @@
 <script type="module">
   import { initializeApp } from "https://www.gstatic.com/firebasejs/10.7.1/firebase-app.js";
   import { getAuth, signInWithPopup, GoogleAuthProvider, signOut, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/10.7.1/firebase-auth.js";
-  import { getFirestore, doc, setDoc, getDoc, collection, addDoc, getDocs, query, orderBy, updateDoc, serverTimestamp } from "https://www.gstatic.com/firebasejs/10.7.1/firebase-firestore.js";
+  import { getFirestore, doc, setDoc, getDoc, collection, addDoc, getDocs, query, orderBy, updateDoc, serverTimestamp, increment } from "https://www.gstatic.com/firebasejs/10.7.1/firebase-firestore.js";
 
   // ============================================
   // REPLACE WITH YOUR FIREBASE CONFIG
@@ -237,103 +237,150 @@
   window.joinTournament = async (tournamentId, entryFee, tournamentName) => {
     const profile = currentProfile || window._globalProfile;
     if (!profile) { showToast("❌ Please login first!"); showModal('login-prompt-modal'); return; }
-    if (profile.walletBalance < entryFee) {
-      showToast("❌ Insufficient balance! Please deposit first.");
+
+    // BUG FIX 1: Disable button immediately to prevent multiple clicks
+    const confirmBtn = document.getElementById('jm-confirm-btn');
+    if (confirmBtn) { confirmBtn.disabled = true; confirmBtn.textContent = '⏳ Processing...'; }
+
+    try {
+      if (profile.walletBalance < entryFee) {
+        showToast("❌ Insufficient balance! Please deposit first.");
+        return;
+      }
+
+      // BUG FIX 2: Check for duplicate participant before adding
+      const existingParts = await getDocs(collection(db, "tournaments", tournamentId, "participants"));
+      let alreadyJoined = false;
+      existingParts.forEach(d => { if (d.data().playerUID === profile.gameUID) alreadyJoined = true; });
+      if (alreadyJoined) {
+        showToast("✅ Aap already joined hain is tournament mein!");
+        hideModal('join-confirm-modal');
+        return;
+      }
+
+      // BUG FIX 4: Open WhatsApp BEFORE await calls so browser doesn't block it
+      const ownerMsg = `🎮 *New Tournament Join!*%0ATournament: *${tournamentName}*%0APlayer: *${profile.name}*%0AUID: *${profile.gameUID}*%0AWhatsApp: *${profile.whatsapp}*%0AEntry Fee: *Rs ${entryFee}*`;
+      window.open(`https://wa.me/${OWNER_WHATSAPP}?text=${ownerMsg}`, '_blank');
+
+      const newBalance = profile.walletBalance - entryFee;
+
+      // Deduct entry fee + increment tournamentsPlayed
+      await updateDoc(doc(db, "players", currentUser.uid), {
+        walletBalance: newBalance,
+        tournamentsPlayed: increment(1)
+      });
+
+      // Add to tournament participants
+      await addDoc(collection(db, "tournaments", tournamentId, "participants"), {
+        playerUID: profile.gameUID,
+        playerName: profile.name,
+        playerWhatsapp: profile.whatsapp,
+        joinedAt: serverTimestamp()
+      });
+
+      // BUG FIX 5: Use atomic increment — no race condition
+      await updateDoc(doc(db, "tournaments", tournamentId), { joinedCount: increment(1) });
+
+      // BUG FIX 3: Use createdAt (not timestamp) so transaction history shows it
+      await addDoc(collection(db, "players", currentUser.uid, "transactions"), {
+        type: "entry_fee",
+        description: `Entry Fee - ${tournamentName}`,
+        amount: -entryFee,
+        createdAt: new Date().toISOString()
+      });
+
+      // Save active tournament + update local profile (BUG FIX 6: also set activeTournamentName locally)
+      await updateDoc(doc(db, "players", currentUser.uid), {
+        activeTournament: tournamentId,
+        activeTournamentName: tournamentName
+      });
+
+      if (currentProfile) { currentProfile.walletBalance = newBalance; currentProfile.activeTournament = tournamentId; currentProfile.activeTournamentName = tournamentName; }
+      if (window._globalProfile) { window._globalProfile.walletBalance = newBalance; window._globalProfile.activeTournament = tournamentId; window._globalProfile.activeTournamentName = tournamentName; }
+      if (window._currentProfile) { window._currentProfile.walletBalance = newBalance; window._currentProfile.activeTournament = tournamentId; window._currentProfile.activeTournamentName = tournamentName; }
+
+      // BUG FIX 7: Update UI — wallet, buttons, and reload tournaments to show fresh slot count
+      refreshWalletPage();
+      refreshTournamentButtons();
+      if (window.loadTournaments) window.loadTournaments(); // BUG FIX 8: refresh slot count on card
+
+      hideModal('join-confirm-modal');
+      showToast("🎮 Joined! Room ID will be sent on WhatsApp before match!");
+
+    } catch(e) {
+      showToast("❌ Error: " + e.message);
+      console.error("Join error:", e);
+      // Re-enable button on error so user can retry
+      if (confirmBtn) { confirmBtn.disabled = false; confirmBtn.textContent = '🎮 CONFIRM & JOIN'; }
+    }
+  };
+
+  // ============= MATCH RESULTS =============
+  window.loadMatchResults = async () => {
+    const container = document.getElementById('results-list');
+    container.innerHTML = '<div style="text-align:center;padding:40px;color:var(--text-dim)">⏳ Loading results...</div>';
+    try {
+      const snap = await getDocs(query(collection(db, "matchResults"), orderBy("completedAt", "desc")));
+      const results = [];
+      snap.forEach(d => results.push({ id: d.id, ...d.data() }));
+      renderMatchResults(results);
+    } catch(e) {
+      container.innerHTML = '<div style="text-align:center;padding:30px;color:var(--text-dim)">Could not load results.</div>';
+    }
+  };
+
+  function renderMatchResults(results) {
+    const container = document.getElementById('results-list');
+    if (results.length === 0) {
+      container.innerHTML = `
+        <div style="text-align:center;padding:60px 20px;color:var(--text-dim)">
+          <div style="font-size:48px;margin-bottom:16px">🏆</div>
+          <div style="font-size:16px;font-weight:600;margin-bottom:8px;color:var(--text)">Abhi koi results nahi</div>
+          <div style="font-size:13px">Pehla tournament complete hone ke baad results yahan dikhenge!</div>
+        </div>`;
       return;
     }
-
-    // Deduct entry fee
-    const newBalance = profile.walletBalance - entryFee;
-    await updateDoc(doc(db, "players", currentUser.uid), { 
-      walletBalance: newBalance,
-      tournamentsPlayed: (profile.tournamentsPlayed || 0) + 1
-    });
-
-    // Add to tournament participants
-    await addDoc(collection(db, "tournaments", tournamentId, "participants"), {
-      playerUID: profile.gameUID,
-      playerName: profile.name,
-      playerWhatsapp: profile.whatsapp,
-      joinedAt: serverTimestamp()
-    });
-
-    // Increment joinedCount in tournament doc
-    const tRef = doc(db, "tournaments", tournamentId);
-    const tSnap = await getDoc(tRef);
-    if (tSnap.exists()) {
-      const currentCount = tSnap.data().joinedCount || 0;
-      await updateDoc(tRef, { joinedCount: currentCount + 1 });
-    }
-
-    // Add transaction
-    await addDoc(collection(db, "players", currentUser.uid, "transactions"), {
-      type: "entry_fee",
-      description: `Entry Fee - ${tournamentName}`,
-      amount: -entryFee,
-      timestamp: serverTimestamp()
-    });
-
-    // Notify owner on WhatsApp
-    const ownerMsg = `🎮 *New Tournament Join!*%0ATournament: *${tournamentName}*%0APlayer: *${profile.name}*%0AUID: *${profile.gameUID}*%0AWhatsApp: *${profile.whatsapp}*%0AEntry Fee: *Rs ${entryFee}*`;
-    window.open(`https://wa.me/${OWNER_WHATSAPP}?text=${ownerMsg}`, '_blank');
-
-    if (currentProfile) currentProfile.walletBalance = newBalance;
-    if (window._globalProfile) window._globalProfile.walletBalance = newBalance;
-    if (window._currentProfile) window._currentProfile.walletBalance = newBalance;
-
-    // Save active tournament so player cant join another
-    await updateDoc(doc(db, "players", currentUser.uid), {
-      activeTournament: tournamentId,
-      activeTournamentName: tournamentName
-    });
-    if (currentProfile) currentProfile.activeTournament = tournamentId;
-    if (window._globalProfile) window._globalProfile.activeTournament = tournamentId;
-    if (window._currentProfile) window._currentProfile.activeTournament = tournamentId;
-
-    refreshWalletPage();
-    refreshTournamentButtons();
-    hideModal('join-confirm-modal');
-    showToast("🎮 Joined! Room ID will be sent on WhatsApp before match!");
-  };
-
-  // ============= LEADERBOARD =============
-  window.loadLeaderboard = async () => {
-    const lb = document.getElementById('leaderboard-list');
-    lb.innerHTML = '<div style="text-align:center;padding:30px;color:var(--text-dim)">Loading...</div>';
-    try {
-      const snap = await getDocs(query(collection(db, "players"), orderBy("totalEarnings", "desc")));
-      const players = [];
-      snap.forEach(d => players.push(d.data()));
-      renderLeaderboard(players);
-    } catch(e) {
-      lb.innerHTML = '<div style="text-align:center;padding:30px;color:var(--text-dim)">Could not load leaderboard.</div>';
-    }
-  };
-
-  function renderLeaderboard(players) {
-    const lb = document.getElementById('leaderboard-list');
-    if (players.length === 0) { lb.innerHTML = '<div style="text-align:center;padding:30px;color:var(--text-dim)">No players yet!</div>'; return; }
-    lb.innerHTML = players.map((p, i) => {
-      if (i === 0) return `
-        <div class="rank1-card">
-          <div class="crown">👑</div>
-          <div class="rank-avatar">${p.photo ? `<img src="${p.photo}" style="width:100%;height:100%;border-radius:50%;object-fit:cover">` : '👤'}</div>
-          <div class="rank-num">#1</div>
-          <div class="rank-name">${p.name}</div>
-          <div class="rank-uid">UID: ${p.gameUID}</div>
-          <div class="rank-prize">Rs ${(p.totalEarnings||0).toLocaleString()}</div>
-          <div class="rank-stats"><span>🏆 ${p.tournamentsWon||0} wins</span><span>🎮 ${p.tournamentsPlayed||0} played</span></div>
-        </div>`;
-      const medal = i === 1 ? '🥈' : i === 2 ? '🥉' : `#${i+1}`;
+    container.innerHTML = results.map(r => {
+      const date = r.completedAt ? new Date(r.completedAt).toLocaleDateString('en-PK', {day:'numeric',month:'short',year:'numeric',hour:'2-digit',minute:'2-digit'}) : 'Date N/A';
+      const winners = r.winners || [];
+      const podium = [
+        { pos: 1, medal: '🥇', color: 'var(--gold)', label: '1st Place' },
+        { pos: 2, medal: '🥈', color: '#C0C0C0', label: '2nd Place' },
+        { pos: 3, medal: '🥉', color: '#CD7F32', label: '3rd Place' },
+      ];
+      const podiumHTML = podium.map(p => {
+        const w = winners.find(x => x.position === p.pos);
+        if (!w) return '';
+        return `
+          <div class="result-podium-item">
+            <div class="result-medal">${p.medal}</div>
+            <div class="result-winner-name">${w.name || '---'}</div>
+            <div class="result-winner-uid">UID: ${w.uid || '---'}</div>
+            <div class="result-winner-prize" style="color:${p.color}">Rs ${(w.prize||0).toLocaleString()}</div>
+            ${w.kills ? `<div class="result-winner-kills">💀 ${w.kills} kills</div>` : ''}
+          </div>`;
+      }).join('');
+      const topKiller = r.topKiller;
       return `
-        <div class="rank-row">
-          <div class="rank-row-num">${medal}</div>
-          <div class="rank-row-avatar">${p.photo ? `<img src="${p.photo}" style="width:100%;height:100%;border-radius:50%;object-fit:cover">` : '👤'}</div>
-          <div class="rank-row-info">
-            <div class="rank-row-name">${p.name}</div>
-            <div class="rank-row-sub">🏆 ${p.tournamentsWon||0} wins • 🎮 ${p.tournamentsPlayed||0} played</div>
+        <div class="result-card">
+          <div class="result-header">
+            <div>
+              <div class="result-title">${r.tournamentName || 'Tournament'}</div>
+              <div class="result-date">📅 ${date}</div>
+            </div>
+            <div class="result-badge-done">✅ Completed</div>
           </div>
-          <div class="rank-row-prize">Rs ${(p.totalEarnings||0).toLocaleString()}</div>
+          <div class="result-podium">${podiumHTML}</div>
+          ${topKiller ? `
+          <div class="result-killer-row">
+            <span>💀 Top Fragger</span>
+            <span style="font-weight:700;color:var(--red)">${topKiller.name} — ${topKiller.kills} kills</span>
+          </div>` : ''}
+          ${r.totalPlayers ? `
+          <div class="result-footer-row">
+            <span style="color:var(--text-dim);font-size:12px">👥 ${r.totalPlayers} players competed</span>
+            <span style="color:var(--text-dim);font-size:12px">🏆 Prize Pool: Rs ${(r.totalPrize||0).toLocaleString()}</span>
+          </div>` : ''}
         </div>`;
     }).join('');
   }
@@ -459,7 +506,7 @@
     await updateDoc(doc(db, 'players', uid), data);
   }
 
-  window._firebaseReady = { joinTournament, loadLeaderboard, updateProfile };
+  window._firebaseReady = { joinTournament, loadMatchResults, updateProfile };
 
   // Expose loadTransactions with correct scope
   window.loadTransactions = async function() {
@@ -955,12 +1002,11 @@ nav {
 .tx-amt.neg { color:var(--red); }
 .tx-status { font-size:11px; color:var(--green); text-align:right; }
 
-/* ====== LEADERBOARD PAGE ====== */
-.lb-hero {
-  text-align:center; padding:30px 20px 20px;
+/* ====== MATCH RESULTS PAGE ====== */
+.results-hero {
+  text-align:center; padding:28px 20px 16px;
 }
-
-.lb-badge {
+.results-badge {
   display:inline-flex; align-items:center; gap:8px;
   background:rgba(245,166,35,0.1);
   border:1px solid var(--border);
@@ -969,87 +1015,79 @@ nav {
   margin-bottom:14px;
   font-family:'Rajdhani',sans-serif; font-weight:600;
 }
-
-.lb-title {
+.results-title {
   font-family:'Barlow Condensed',sans-serif;
-  font-size:50px; font-weight:900;
+  font-size:46px; font-weight:900;
   color:var(--gold); text-transform:uppercase;
   letter-spacing:2px; margin-bottom:8px;
   text-shadow:0 0 40px rgba(245,166,35,0.25);
 }
+.results-sub { font-size:14px; color:var(--text-dim); line-height:1.6; }
 
-.lb-sub { font-size:14px; color:var(--text-dim); line-height:1.6; }
-
-.lb-tabs {
-  display:flex; gap:4px;
+.result-card {
   background:var(--dark3);
-  border-radius:10px; padding:4px;
-  margin:16px; margin-top:0;
-}
-
-.lb-tab {
-  flex:1; padding:10px;
-  border-radius:8px; border:none;
-  background:none; color:var(--text-dim);
-  font-family:'Rajdhani',sans-serif;
-  font-size:14px; font-weight:700;
-  cursor:pointer; text-align:center;
-  transition: all 0.2s;
-}
-
-.lb-tab.active { background:var(--gold); color:#000; }
-
-.rank1-card {
-  background:linear-gradient(135deg, var(--dark3), rgba(245,166,35,0.06));
-  border:1px solid rgba(245,166,35,0.35);
-  border-radius:16px; padding:24px;
-  text-align:center; margin:0 16px 12px;
-}
-
-.crown { font-size:32px; margin-bottom:8px; }
-
-.rank-avatar {
-  width:70px; height:70px; border-radius:50%;
-  background:var(--gold);
-  display:flex; align-items:center; justify-content:center;
-  font-size:28px; margin:0 auto 12px;
-  border:3px solid var(--gold);
-  overflow:hidden;
-}
-
-.rank-num { font-family:'Barlow Condensed',sans-serif; font-size:32px; font-weight:900; color:var(--gold); }
-.rank-name { font-family:'Barlow Condensed',sans-serif; font-size:22px; font-weight:700; }
-.rank-uid { font-size:12px; color:var(--text-dim); margin:4px 0 12px; }
-.rank-prize { font-family:'Barlow Condensed',sans-serif; font-size:30px; font-weight:800; color:var(--green); margin-bottom:8px; }
-.rank-stats { display:flex; justify-content:center; gap:16px; font-size:13px; color:var(--text-dim); }
-
-.rank-row {
-  display:flex; align-items:center; gap:14px;
-  background:var(--dark3); border:1px solid var(--border2);
-  border-radius:12px; padding:14px;
-  margin:0 16px 10px;
+  border:1px solid var(--border2);
+  border-radius:16px; padding:18px;
+  margin:0 16px 16px;
   transition: border-color 0.2s;
 }
+.result-card:hover { border-color:var(--border); }
 
-.rank-row:hover { border-color:var(--border); }
-
-.rank-row-num {
+.result-header {
+  display:flex; justify-content:space-between; align-items:flex-start;
+  margin-bottom:16px;
+}
+.result-title {
   font-family:'Barlow Condensed',sans-serif;
-  font-size:20px; font-weight:700;
-  width:30px; text-align:center; color:var(--text-dim);
+  font-size:20px; font-weight:800; text-transform:uppercase;
+  margin-bottom:4px;
+}
+.result-date { font-size:12px; color:var(--text-dim); }
+.result-badge-done {
+  background:rgba(46,204,113,0.12);
+  color:var(--green);
+  border:1px solid rgba(46,204,113,0.25);
+  border-radius:20px; padding:4px 10px;
+  font-size:11px; font-weight:700;
+  white-space:nowrap;
 }
 
-.rank-row-avatar {
-  width:42px; height:42px; border-radius:50%;
+.result-podium {
+  display:grid; grid-template-columns:1fr 1fr 1fr;
+  gap:8px; margin-bottom:14px;
+}
+.result-podium-item {
   background:var(--dark4);
-  display:flex; align-items:center; justify-content:center;
-  font-size:18px; overflow:hidden;
+  border:1px solid var(--border2);
+  border-radius:12px; padding:12px 8px;
+  text-align:center;
 }
+.result-medal { font-size:24px; margin-bottom:6px; }
+.result-winner-name {
+  font-family:'Barlow Condensed',sans-serif;
+  font-size:14px; font-weight:700;
+  margin-bottom:2px;
+  white-space:nowrap; overflow:hidden; text-overflow:ellipsis;
+}
+.result-winner-uid { font-size:10px; color:var(--text-dim); margin-bottom:4px; }
+.result-winner-prize {
+  font-family:'Barlow Condensed',sans-serif;
+  font-size:16px; font-weight:800;
+}
+.result-winner-kills { font-size:11px; color:var(--text-dim); margin-top:2px; }
 
-.rank-row-info { flex:1; }
-.rank-row-name { font-weight:700; font-size:15px; }
-.rank-row-sub { font-size:12px; color:var(--text-dim); margin-top:2px; }
-.rank-row-prize { font-family:'Barlow Condensed',sans-serif; font-size:18px; font-weight:700; color:var(--green); }
+.result-killer-row {
+  display:flex; justify-content:space-between; align-items:center;
+  background:rgba(231,76,60,0.07);
+  border:1px solid rgba(231,76,60,0.2);
+  border-radius:8px; padding:10px 12px;
+  font-size:13px; margin-bottom:10px;
+}
+.result-footer-row {
+  display:flex; justify-content:space-between;
+  padding-top:10px;
+  border-top:1px solid rgba(255,255,255,0.04);
+}
 
 /* ====== PROFILE PAGE ====== */
 .profile-hero {
@@ -1241,7 +1279,27 @@ nav {
   padding: 20px 16px 80px;
   text-align: center;
 }
-.footer-brand { font-size: 16px; font-weight: 800; letter-spacing: 1px; margin-bottom: 10px; }
+.footer-brand { font-size: 16px; font-weight: 800; letter-spacing: 1px; margin-bottom: 12px; }
+.footer-socials {
+  display: flex; justify-content: center; gap: 12px;
+  margin-bottom: 14px; flex-wrap: wrap;
+}
+.footer-social-btn {
+  display: flex; align-items: center; gap: 6px;
+  padding: 8px 14px; border-radius: 50px;
+  font-size: 12px; font-weight: 700;
+  cursor: pointer; text-decoration: none;
+  font-family: 'Rajdhani', sans-serif;
+  letter-spacing: 0.3px;
+  transition: transform 0.15s, opacity 0.15s;
+  border: 1px solid transparent;
+}
+.footer-social-btn:active { transform: scale(0.96); opacity: 0.85; }
+.fsb-youtube  { background: rgba(255,0,0,0.12);    color: #FF4444; border-color: rgba(255,0,0,0.25); }
+.fsb-facebook { background: rgba(24,119,242,0.12); color: #4A9EFF; border-color: rgba(24,119,242,0.25); }
+.fsb-instagram{ background: rgba(225,48,108,0.12); color: #E1306C; border-color: rgba(225,48,108,0.25); }
+.fsb-tiktok   { background: rgba(255,255,255,0.06);color: #EEF0FF; border-color: rgba(255,255,255,0.12); }
+.fsb-whatsapp { background: rgba(37,211,102,0.12); color: #25D366; border-color: rgba(37,211,102,0.25); }
 .footer-links { display: flex; justify-content: center; align-items: center; gap: 10px; margin-bottom: 10px; }
 .footer-link { color: var(--gold); font-size: 13px; cursor: pointer; }
 .footer-link:hover { text-decoration: underline; }
@@ -1503,20 +1561,15 @@ nav {
   </div>
 </div>
 
-<!-- ===== LEADERBOARD PAGE ===== -->
+<!-- ===== MATCH RESULTS PAGE ===== -->
 <div class="page" id="page-leaderboard">
-  <div class="lb-hero">
-    <div class="lb-badge">🏆 Top Players</div>
-    <div class="lb-title">LEADERBOARD</div>
-    <p class="lb-sub">Compete with the best Free Fire players.<br>Climb the ranks and earn real money!</p>
+  <div class="results-hero">
+    <div class="results-badge">🏆 Tournament History</div>
+    <div class="results-title">MATCH RESULTS</div>
+    <p class="results-sub">Completed tournament winners &amp; prize distributions.</p>
   </div>
-  <div class="lb-tabs">
-    <button class="lb-tab active" onclick="switchLbTab(this,'alltime')">All Time</button>
-    <button class="lb-tab" onclick="switchLbTab(this,'monthly')">Monthly</button>
-    <button class="lb-tab" onclick="switchLbTab(this,'weekly')">Weekly</button>
-  </div>
-  <div id="leaderboard-list">
-    <div style="text-align:center;padding:40px;color:var(--text-dim)">Loading leaderboard...</div>
+  <div id="results-list">
+    <div style="text-align:center;padding:40px;color:var(--text-dim)">⏳ Loading results...</div>
   </div>
   <div style="height:20px"></div>
 </div>
@@ -1605,8 +1658,8 @@ nav {
   <button class="bnav-btn" onclick="showPage('wallet')" id="nav-wallet">
     <svg viewBox="0 0 24 24" fill="currentColor"><path d="M21 18v1c0 1.1-.9 2-2 2H5c-1.11 0-2-.9-2-2V5c0-1.1.89-2 2-2h14c1.1 0 2 .9 2 2v1h-9c-1.11 0-2 .9-2 2v8c0 1.1.89 2 2 2h9zm-9-2h10V8H12v8zm4-2.5c-.83 0-1.5-.67-1.5-1.5s.67-1.5 1.5-1.5 1.5.67 1.5 1.5-.67 1.5-1.5 1.5z"/></svg>Wallet
   </button>
-  <button class="bnav-btn" onclick="showPage('leaderboard'); loadLeaderboard()" id="nav-leaderboard">
-    <svg viewBox="0 0 24 24" fill="currentColor"><path d="M7.5 21H2V9h5.5v12zm7.25-18h-5.5v18h5.5V3zM22 11h-5.5v10H22V11z"/></svg>Leaderboard
+  <button class="bnav-btn" onclick="showPage('leaderboard'); loadMatchResults()" id="nav-leaderboard">
+    <svg viewBox="0 0 24 24" fill="currentColor"><path d="M19 3H5c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h14c1.1 0 2-.9 2-2V5c0-1.1-.9-2-2-2zm-7 14l-5-5 1.41-1.41L12 14.17l7.59-7.59L21 8l-9 9z"/></svg>Results
   </button>
   <button class="bnav-btn" onclick="showPage('profile')" id="nav-profile" style="display:none">
     <svg viewBox="0 0 24 24" fill="currentColor"><path d="M12 12c2.21 0 4-1.79 4-4s-1.79-4-4-4-4 1.79-4 4 1.79 4 4 4zm0 2c-2.67 0-8 1.34-8 4v2h16v-2c0-2.66-5.33-4-8-4z"/></svg>Profile
@@ -1736,6 +1789,7 @@ function showPage(p) {
   if (nb) nb.classList.add('active');
   window.scrollTo(0, 0);
   if (p === 'wallet') { if (window.loadTransactions) window.loadTransactions(); }
+  if (p === 'leaderboard') { if (window.loadMatchResults) window.loadMatchResults(); }
 }
 
 function showModal(id) { document.getElementById(id).classList.add('active'); }
@@ -1786,7 +1840,12 @@ function openJoinModal(tid, fee, name, current, max) {
   document.getElementById('jm-fee').textContent = '-Rs ' + fee;
   document.getElementById('jm-balance').textContent = 'Rs ' + (p.walletBalance||0).toLocaleString();
   document.getElementById('jm-after').textContent = 'Rs ' + ((p.walletBalance||0) - fee).toLocaleString();
-  document.getElementById('jm-confirm-btn').onclick = () => {
+
+  // BUG FIX: Reset button to original state every time modal opens
+  const btn = document.getElementById('jm-confirm-btn');
+  if (btn) { btn.disabled = false; btn.textContent = '🎮 CONFIRM & JOIN'; }
+
+  btn.onclick = () => {
     if (window._firebaseReady) window._firebaseReady.joinTournament(_joinTournamentId, _joinFee, _joinName);
   };
   showModal('join-confirm-modal');
@@ -2044,6 +2103,28 @@ document.addEventListener('DOMContentLoaded', () => {
 <footer class="site-footer">
   <div class="footer-inner">
     <div class="footer-brand">⚡ CLUTCH<span style="color:var(--gold)">ZONE</span></div>
+    <div class="footer-socials">
+      <a class="footer-social-btn fsb-youtube" href="https://www.youtube.com/@clutchzonetournament" target="_blank" rel="noopener">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><path d="M21.8 8s-.2-1.4-.8-2c-.8-.8-1.6-.8-2-.9C16.8 5 12 5 12 5s-4.8 0-7 .1c-.4.1-1.2.1-2 .9-.6.6-.8 2-.8 2S2 9.6 2 11.2v1.5c0 1.6.2 3.2.2 3.2s.2 1.4.8 2c.8.8 1.8.8 2.2.8C6.8 19 12 19 12 19s4.8 0 7-.1c.4-.1 1.2-.1 2-.9.6-.6.8-2 .8-2s.2-1.6.2-3.2v-1.5C22 9.6 21.8 8 21.8 8zM9.7 14.5V9l5.4 2.8-5.4 2.7z"/></svg>
+        YouTube
+      </a>
+      <a class="footer-social-btn fsb-facebook" href="https://www.facebook.com/profile.php?id=61578776249560" target="_blank" rel="noopener">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><path d="M18 2h-3a5 5 0 0 0-5 5v3H7v4h3v8h4v-8h3l1-4h-4V7a1 1 0 0 1 1-1h3z"/></svg>
+        Facebook
+      </a>
+      <a class="footer-social-btn fsb-instagram" href="http://instagram.com/clutchzone.pk" target="_blank" rel="noopener">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="2" y="2" width="20" height="20" rx="5" ry="5"/><circle cx="12" cy="12" r="3"/><circle cx="17.5" cy="6.5" r="1" fill="currentColor" stroke="none"/></svg>
+        Instagram
+      </a>
+      <a class="footer-social-btn fsb-tiktok" href="https://www.tiktok.com/@clutchzone.fun" target="_blank" rel="noopener">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><path d="M19.59 6.69a4.83 4.83 0 0 1-3.77-4.25V2h-3.45v13.67a2.89 2.89 0 0 1-2.88 2.5 2.89 2.89 0 0 1-2.89-2.89 2.89 2.89 0 0 1 2.89-2.89c.28 0 .54.04.79.1V9.01a6.33 6.33 0 0 0-.79-.05 6.34 6.34 0 0 0-6.34 6.34 6.34 6.34 0 0 0 6.34 6.34 6.34 6.34 0 0 0 6.33-6.34V8.69a8.19 8.19 0 0 0 4.79 1.52V6.73a4.85 4.85 0 0 1-1.02-.04z"/></svg>
+        TikTok
+      </a>
+      <a class="footer-social-btn fsb-whatsapp" href="https://whatsapp.com/channel/0029VbBwzMqBlHpcBu6jO53D" target="_blank" rel="noopener">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><path d="M17.472 14.382c-.297-.149-1.758-.867-2.03-.967-.273-.099-.471-.148-.67.15-.197.297-.767.966-.94 1.164-.173.199-.347.223-.644.075-.297-.15-1.255-.463-2.39-1.475-.883-.788-1.48-1.761-1.653-2.059-.173-.297-.018-.458.13-.606.134-.133.298-.347.446-.52.149-.174.198-.298.298-.497.099-.198.05-.371-.025-.52-.075-.149-.669-1.612-.916-2.207-.242-.579-.487-.5-.669-.51-.173-.008-.371-.01-.57-.01-.198 0-.52.074-.792.372-.272.297-1.04 1.016-1.04 2.479 0 1.462 1.065 2.875 1.213 3.074.149.198 2.096 3.2 5.077 4.487.709.306 1.262.489 1.694.625.712.227 1.36.195 1.871.118.571-.085 1.758-.719 2.006-1.413.248-.694.248-1.289.173-1.413-.074-.124-.272-.198-.57-.347m-5.421 7.403h-.004a9.87 9.87 0 0 1-5.031-1.378l-.361-.214-3.741.982.998-3.648-.235-.374a9.86 9.86 0 0 1-1.51-5.26c.001-5.45 4.436-9.884 9.888-9.884 2.64 0 5.122 1.03 6.988 2.898a9.825 9.825 0 0 1 2.893 6.994c-.003 5.45-4.437 9.884-9.885 9.884m8.413-18.297A11.815 11.815 0 0 0 12.05 0C5.495 0 .16 5.335.157 11.892c0 2.096.547 4.142 1.588 5.945L.057 24l6.305-1.654a11.882 11.882 0 0 0 5.683 1.448h.005c6.554 0 11.89-5.335 11.893-11.893a11.821 11.821 0 0 0-3.48-8.413z"/></svg>
+        WhatsApp
+      </a>
+    </div>
     <div class="footer-links">
       <span onclick="showModal('terms-modal')" class="footer-link">📄 Terms & Conditions</span>
       <span class="footer-sep">|</span>
