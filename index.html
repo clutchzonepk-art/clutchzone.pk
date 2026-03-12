@@ -181,11 +181,14 @@
     const btn = document.querySelector('#withdraw-modal .btn-gold');
     if (btn) { btn.disabled = true; btn.textContent = '⏳ Processing...'; }
 
-    try {
-      const newBalance = currentProfile.walletBalance - amount;
+    // Open WhatsApp popup now (user gesture) before any awaits
+    const waWindow = window.open('', '_blank');
 
-      // 1. Save withdrawal request to Firebase (uses form-entered method/account)
+    try {
+      // 1. Save withdrawal REQUEST only — do NOT deduct balance yet
+      //    Balance will be deducted by admin when they APPROVE the request
       await addDoc(collection(db, "withdrawalRequests"), {
+        playerFirebaseUID: currentUser.uid,   // needed for admin to deduct balance
         playerUID: currentProfile.gameUID,
         playerName: currentProfile.name,
         playerWhatsapp: currentProfile.whatsapp,
@@ -197,37 +200,35 @@
         timestamp: serverTimestamp()
       });
 
-      // 2. Deduct balance
-      await updateDoc(doc(db, 'players', currentUser.uid), { walletBalance: newBalance });
-
-      // 3. Save transaction record
+      // 2. Save a PENDING transaction so player can see it in history
       await addDoc(collection(db, "players", currentUser.uid, "transactions"), {
-        type: 'withdrawal',
-        description: 'Withdrawal - ' + _withdrawMethod,
+        type: 'withdrawal_pending',
+        description: 'Withdrawal Request - ' + _withdrawMethod + ' (Pending Approval)',
         amount: -amount,
         createdAt: new Date().toISOString()
       });
 
-      // 4. Update local balance
-      currentProfile.walletBalance = newBalance;
-      if (window._globalProfile) window._globalProfile.walletBalance = newBalance;
-      if (window._currentProfile) window._currentProfile.walletBalance = newBalance;
-      const walletEl = document.getElementById('wallet-balance');
-      if (walletEl) walletEl.textContent = 'Rs ' + newBalance.toLocaleString();
-
-      // 5. WhatsApp to owner
+      // 3. Notify owner on WhatsApp
       const msg = '🔔 *Withdrawal Request*%0APlayer: *' + currentProfile.name + '*%0AUID: *' + currentProfile.gameUID + '*%0AAmount: *Rs ' + amount + '*%0AMethod: *' + _withdrawMethod + '*%0AAccount: *' + account + '*';
-      window.open('https://wa.me/' + OWNER_WHATSAPP + '?text=' + msg, '_blank');
+      if (waWindow && !waWindow.closed) {
+        waWindow.location.href = 'https://wa.me/' + OWNER_WHATSAPP + '?text=' + msg;
+      } else {
+        window.open('https://wa.me/' + OWNER_WHATSAPP + '?text=' + msg, '_blank');
+      }
 
-      // 6. Close modal + show success
+      // 4. Close modal + show success
       hideModal('withdraw-modal');
       showModal('withdraw-success-modal');
       document.getElementById('withdraw-amount-input').value = '';
       document.getElementById('withdraw-account-input').value = '';
 
+      // 5. Refresh transaction list so pending entry shows immediately
+      if (window.loadTransactions) window.loadTransactions();
+
     } catch(e) {
       showToast("❌ Error: " + e.message);
       console.error("Withdraw error:", e);
+      if (waWindow && !waWindow.closed) waWindow.close();
     } finally {
       if (btn) { btn.disabled = false; btn.textContent = '⬆️ SUBMIT WITHDRAWAL REQUEST'; }
     }
@@ -595,7 +596,7 @@
         txns.push({ ...data, _sortKey: sortKey });
       });
       txns.sort((a, b) => b._sortKey - a._sortKey);
-      // Calculate wallet stats
+      // Calculate wallet stats — only count approved withdrawals
       let totalDeposited = 0, totalWithdrawn = 0, totalWon = 0, totalKills = 0;
       txns.forEach(tx => {
         if (tx.type === 'deposit' || (tx.type === 'admin_update' && tx.amount > 0)) totalDeposited += tx.amount;
@@ -615,11 +616,23 @@
       txList.innerHTML = '';
       txns.forEach(tx => {
         const isPos = tx.amount > 0;
-        const icon = tx.type === 'deposit' ? '⬇️' : tx.type === 'prize' ? '🏆' : tx.type === 'entry_fee' ? '🎮' : tx.type === 'withdrawal' ? '🏧' : tx.type === 'admin_update' ? '⚙️' : '💰';
+        const isPending = tx.type === 'withdrawal_pending';
+        const icon = tx.type === 'deposit' ? '⬇️'
+          : tx.type === 'prize' ? '🏆'
+          : tx.type === 'entry_fee' ? '🎮'
+          : tx.type === 'withdrawal' ? '🏧'
+          : (tx.type === 'withdrawal_pending') ? '⏳'
+          : tx.type === 'admin_update' ? '⚙️' : '💰';
         const iconClass = isPos ? 'in' : (tx.type === 'entry_fee' ? 'fee' : 'out');
         let dateStr = '';
         if (tx.createdAt) dateStr = new Date(tx.createdAt).toLocaleDateString('en-PK', {day:'numeric', month:'short', hour:'2-digit', minute:'2-digit'});
         else if (tx.timestamp && tx.timestamp.toDate) dateStr = tx.timestamp.toDate().toLocaleDateString('en-PK', {day:'numeric', month:'short', hour:'2-digit', minute:'2-digit'});
+        const statusHtml = isPending
+          ? `<div class="tx-status" style="color:#F5A623">⏳ Pending</div>`
+          : `<div class="tx-status">✅ Done</div>`;
+        // For pending withdrawal, show amount in gold (not red) since balance not deducted yet
+        const amtClass = isPending ? '' : (isPos ? 'pos' : 'neg');
+        const amtStyle = isPending ? 'color:var(--gold)' : '';
         txList.innerHTML += `
         <div class="tx-item">
           <div class="tx-icon ${iconClass}">${icon}</div>
@@ -628,8 +641,8 @@
             <div class="tx-date">${dateStr}</div>
           </div>
           <div>
-            <div class="tx-amt ${isPos ? 'pos' : 'neg'}">${isPos ? '+' : ''}Rs ${Math.abs(tx.amount).toLocaleString()}</div>
-            <div class="tx-status">✅ Done</div>
+            <div class="tx-amt ${amtClass}" style="${amtStyle}">${isPos ? '+' : ''}Rs ${Math.abs(tx.amount).toLocaleString()}</div>
+            ${statusHtml}
           </div>
         </div>`;
       });
