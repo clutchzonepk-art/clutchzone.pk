@@ -716,20 +716,83 @@ body{font-family:'Exo 2',sans-serif;background:var(--dark);color:var(--text);min
   }
 
   window.approveW = async (wid, wa, amt, name, method, acc) => {
+    const btn = event && event.target ? event.target : null;
+    if (btn) { btn.disabled = true; btn.textContent = '⏳ Approving...'; }
+
     try {
-      await updateDoc(doc(db,'withdrawalRequests',wid), {status:'approved', approvedAt:serverTimestamp()});
+      // 1. Get the withdrawal request to find playerFirebaseUID
+      const wSnap = await getDocs(collection(db, 'withdrawalRequests'));
+      let wData = null;
+      wSnap.forEach(d => { if (d.id === wid) wData = { id: d.id, ...d.data() }; });
+
+      // 2. Find player by gameUID to get Firebase UID
+      const pSnap = await getDocs(collection(db, 'players'));
+      let playerDoc = null;
+      pSnap.forEach(d => {
+        if (d.data().gameUID === (wData && wData.playerUID)) playerDoc = { id: d.id, ...d.data() };
+        // Also match by playerFirebaseUID if saved
+        if (wData && wData.playerFirebaseUID && d.id === wData.playerFirebaseUID) playerDoc = { id: d.id, ...d.data() };
+      });
+
+      if (!playerDoc) {
+        showToast('❌ Player not found in Firebase! Manual process karein.');
+        if (btn) { btn.disabled = false; btn.textContent = '✅ Approve & Notify'; }
+        return;
+      }
+
+      const newBal = Math.max(0, (playerDoc.walletBalance || 0) - amt);
+
+      // 3. Deduct balance from player
+      await updateDoc(doc(db, 'players', playerDoc.id), { walletBalance: newBal });
+
+      // 4. Save final approved transaction in player's history
+      await addDoc(collection(db, 'players', playerDoc.id, 'transactions'), {
+        type: 'withdrawal',
+        description: 'Withdrawal Approved - ' + method,
+        amount: -amt,
+        createdAt: new Date().toISOString()
+      });
+
+      // 5. Mark request as approved
+      await updateDoc(doc(db, 'withdrawalRequests', wid), {
+        status: 'approved',
+        approvedAt: serverTimestamp(),
+        newBalance: newBal
+      });
+
+      // 6. Send WhatsApp notification to player
       const msg = encodeURIComponent(`✅ *Clutch Zone Withdrawal Approved!*\nHi *${name}*!\nAapka withdrawal *Rs ${amt}* process ho gaya.\nAccount: *${method}* - *${acc}*\nShukriya! 🎮`);
       window.open('https://wa.me/92' + wa + '?text=' + msg, '_blank');
-      showToast('✅ Approved! Player ko WhatsApp gaya!');
+
+      showToast('✅ Approved! Balance deducted. Player ko WhatsApp gaya!');
       await loadAll();
-    } catch(e) { showToast('❌ Error: ' + e.message); }
+    } catch(e) {
+      showToast('❌ Error: ' + e.message);
+      console.error('approveW error:', e);
+      if (btn) { btn.disabled = false; btn.textContent = '✅ Approve & Notify'; }
+    }
   };
 
   window.rejectW = async (wid, name) => {
     if (!confirm(name + ' ki request reject karni hai?')) return;
-    await updateDoc(doc(db,'withdrawalRequests',wid), {status:'rejected'});
-    showToast('❌ Request reject ho gayi!');
-    await loadAll();
+    try {
+      // Get request details for WhatsApp notification
+      const wSnap = await getDocs(collection(db, 'withdrawalRequests'));
+      let wData = null;
+      wSnap.forEach(d => { if (d.id === wid) wData = { id: d.id, ...d.data() }; });
+
+      await updateDoc(doc(db, 'withdrawalRequests', wid), { status: 'rejected', rejectedAt: serverTimestamp() });
+
+      // Notify player on WhatsApp about rejection
+      if (wData && wData.playerWhatsapp) {
+        const waNum = wData.playerWhatsapp.replace(/^0/, '').replace(/\D/g, '');
+        const msg = encodeURIComponent(`❌ *Clutch Zone Withdrawal Rejected*\nHi *${name}*!\nAapki withdrawal request *Rs ${wData.amount}* reject ho gayi.\nKisi maslay k liye WhatsApp karo: 03270617401`);
+        window.open('https://wa.me/92' + waNum + '?text=' + msg, '_blank');
+      }
+
+      showToast('❌ Request reject ho gayi!');
+      await loadAll();
+    } catch(e) { showToast('❌ Error: ' + e.message); }
   };
 
   function showErr(msg) {
