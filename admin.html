@@ -394,9 +394,13 @@ body{font-family:'Exo 2',sans-serif;background:var(--dark);color:var(--text);min
   window._db = db;
   window._collection = collection;
   window._getDocs = getDocs;
+  window._getDoc = getDoc;
   window._addDoc = addDoc;
+  window._updateDoc = updateDoc;
   window._deleteDoc = deleteDoc;
   window._doc = doc;
+  window._increment = increment;
+  window._serverTimestamp = serverTimestamp;
 
   let allPlayers = [], allTournaments = [], allWithdrawals = [];
 
@@ -1004,7 +1008,7 @@ async function loadAnnouncements() {
 
     // Then load participants async
     try {
-      const snap = await getDocs(collection(db, 'tournaments', tid, 'participants'));
+      const snap = await window._getDocs(window._collection(window._db, 'tournaments', tid, 'participants'));
       if (snap.empty) {
         // No participants found — use text inputs with helper message
         ['prize-uid1','prize-uid2','prize-uid3'].forEach(elId => {
@@ -1064,7 +1068,7 @@ async function loadAnnouncements() {
 
     try {
       // Get all players to match UID → Firebase UID
-      const playersSnap = await getDocs(collection(db, 'players'));
+      const playersSnap = await window._getDocs(window._collection(window._db, 'players'));
       const playerMap = {};
       playersSnap.forEach(d => { playerMap[d.data().gameUID] = { id: d.id, ...d.data() }; });
 
@@ -1098,8 +1102,8 @@ async function loadAnnouncements() {
         if (p.label.includes('1st Place')) {
           updateData.tournamentsWon = (player.tournamentsWon || 0) + 1;
         }
-        await updateDoc(doc(db, 'players', player.id), updateData);
-        await addDoc(collection(db, 'players', player.id, 'transactions'), {
+        await window._updateDoc(window._doc(window._db, 'players', player.id), updateData);
+        await window._addDoc(window._collection(window._db, 'players', player.id, 'transactions'), {
           type: p.type,
           description: p.label,
           amount: p.amt,
@@ -1116,13 +1120,13 @@ async function loadAnnouncements() {
 
       // BUG FIX 11: Clear activeTournament from all participants so they can join next tournament
       try {
-        const partsSnap = await getDocs(collection(db, 'tournaments', _prizeTid, 'participants'));
+        const partsSnap = await window._getDocs(window._collection(window._db, 'tournaments', _prizeTid, 'participants'));
         const clearBatch = [];
         partsSnap.forEach(d => {
           const pUID = d.data().playerUID;
           const player = playerMap[pUID];
           if (player) {
-            clearBatch.push(updateDoc(doc(db, 'players', player.id), { activeTournament: null, activeTournamentName: null }));
+            clearBatch.push(window._updateDoc(window._doc(window._db, 'players', player.id), { activeTournament: null, activeTournamentName: null }));
           }
         });
         if (clearBatch.length > 0) await Promise.all(clearBatch);
