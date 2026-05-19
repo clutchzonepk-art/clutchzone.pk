@@ -157,7 +157,10 @@ body{font-family:'Exo 2',sans-serif;background:var(--dark);color:var(--text);min
       <br>
       <div class="sec-hdr">
         <div class="sec-title">👥 Players</div>
-        <button class="abtn green-btn" onclick="loadAll()">🔄 Refresh</button>
+        <div style="display:flex;gap:8px;flex-wrap:wrap">
+          <button class="abtn green-btn" onclick="loadAll()">🔄 Refresh</button>
+          <button class="abtn" style="background:#25D366;color:#fff" onclick="exportWhatsAppNumbers()">📋 Export Numbers (WASender)</button>
+        </div>
       </div>
       <input type="text" class="search" id="psearch" placeholder="🔍 Search: naam, UID, WhatsApp, email..." oninput="searchPlayers()">
       <div style="overflow-x:auto">
@@ -884,6 +887,65 @@ function switchTab(n, btn) {
   btn.classList.add('active');
   if (n === 'announcements') loadAnnouncements();
   if (n === 'results') loadMatchResults();
+}
+
+// ===== EXPORT WHATSAPP NUMBERS FOR WASENDER =====
+async function exportWhatsAppNumbers() {
+  try {
+    showToast('⏳ Numbers export ho rahe hain...');
+    const snap = await window._getDocs(window._collection(window._db, 'players'));
+    if (snap.empty) { showToast('❌ Koi player nahi mila!'); return; }
+
+    const numbers = [];
+    snap.forEach(d => {
+      const p = d.data();
+      let num = (p.whatsapp || '').replace(/\D/g, '').trim();
+      if (!num) return;
+      // Normalize to international format (92xxxxxxxxxx)
+      if (num.startsWith('0')) num = '92' + num.slice(1);
+      if (!num.startsWith('92')) num = '92' + num;
+      if (num.length >= 11) numbers.push(num);
+    });
+
+    if (numbers.length === 0) {
+      showToast('❌ Kisi player ka WhatsApp number nahi mila!');
+      return;
+    }
+
+    // Create CSV content for WASender
+    const csvContent = 'Phone\n' + numbers.join('\n');
+    const blob = new Blob([csvContent], { type: 'text/csv' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = 'clutchzone_players_' + numbers.length + '.csv';
+    a.click();
+    URL.revokeObjectURL(url);
+
+    // Also show numbers in a copyable popup
+    const modal = document.createElement('div');
+    modal.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.85);z-index:9999;display:flex;align-items:center;justify-content:center;padding:20px';
+    modal.innerHTML = `
+      <div style="background:#1a1a2e;border:1px solid #333;border-radius:16px;padding:24px;max-width:500px;width:100%;max-height:80vh;overflow-y:auto">
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:16px">
+          <h3 style="color:#25D366;margin:0">📱 ${numbers.length} Numbers Exported</h3>
+          <button onclick="this.closest('div[style*=fixed]').remove()" style="background:none;border:none;color:#fff;font-size:20px;cursor:pointer">✕</button>
+        </div>
+        <p style="color:#aaa;font-size:13px;margin-bottom:12px">CSV file download ho gayi. WASender mein import karo.<br>Ya neeche se copy karo:</p>
+        <textarea id="num-export-area" style="width:100%;height:180px;background:#0d0d1a;color:#25D366;border:1px solid #333;border-radius:8px;padding:10px;font-size:13px;resize:none">${numbers.join('\n')}</textarea>
+        <div style="display:flex;gap:8px;margin-top:12px">
+          <button onclick="navigator.clipboard.writeText(document.getElementById('num-export-area').value);this.textContent='✅ Copied!'" 
+            style="flex:1;background:#25D366;color:#fff;border:none;border-radius:8px;padding:10px;cursor:pointer;font-weight:700">
+            📋 Copy All Numbers
+          </button>
+        </div>
+        <p style="color:#666;font-size:11px;margin-top:10px">Total: ${numbers.length} numbers | WASender CSV format ready</p>
+      </div>`;
+    document.body.appendChild(modal);
+    showToast('✅ ' + numbers.length + ' numbers export ho gaye!');
+  } catch(e) {
+    showToast('❌ Error: ' + e.message);
+  }
 }
 function showModal(id) { document.getElementById(id).classList.add('active'); }
 function hideModal(id) { document.getElementById(id).classList.remove('active'); }
