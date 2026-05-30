@@ -769,14 +769,13 @@ body{font-family:'Exo 2',sans-serif;background:var(--dark);color:var(--text);min
         }
       }
 
-      // 4. Deduct balance
+      // 4. DO NOT deduct balance again — it was already deducted when player submitted the request (H-04 fix).
+      // Just read current balance for logging purposes.
       const pDoc = await getDoc(doc(db, 'players', playerFBUID));
       const curBal = pDoc.exists() ? (pDoc.data().walletBalance || 0) : 0;
-      const newBal = Math.max(0, curBal - amt);
-      await updateDoc(doc(db, 'players', playerFBUID), { walletBalance: newBal });
 
       // 5. Mark request as approved
-      await updateDoc(wRef, { status: 'approved', approvedAt: serverTimestamp(), newBalance: newBal });
+      await updateDoc(wRef, { status: 'approved', approvedAt: serverTimestamp(), newBalance: curBal });
 
       // 6. WhatsApp to player
       const msg = encodeURIComponent(`✅ *Clutch Zone Withdrawal Approved!*\nHi *${name}*!\nAapka withdrawal *Rs ${amt}* process ho gaya.\nAccount: *${method}* - *${acc}*\nShukriya! 🎮`);
@@ -826,7 +825,15 @@ body{font-family:'Exo 2',sans-serif;background:var(--dark);color:var(--text);min
         }
       }
 
-      // 3. Mark request as rejected
+      // 3. REFUND balance back to player on rejection
+      if (playerFBUID && wData && wData.amount) {
+        const pDoc = await getDoc(doc(db, 'players', playerFBUID));
+        const curBal = pDoc.exists() ? (pDoc.data().walletBalance || 0) : 0;
+        const refundedBal = curBal + wData.amount;
+        await updateDoc(doc(db, 'players', playerFBUID), { walletBalance: refundedBal });
+      }
+
+      // 4. Mark request as rejected
       await updateDoc(wRef, { status: 'rejected', rejectedAt: serverTimestamp() });
 
       // 4. Notify player on WhatsApp
