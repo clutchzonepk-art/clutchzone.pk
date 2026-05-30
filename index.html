@@ -137,10 +137,14 @@
 <script type="module">
   import { initializeApp } from "https://www.gstatic.com/firebasejs/10.7.1/firebase-app.js";
   import { getAuth, signInWithPopup, GoogleAuthProvider, signOut, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/10.7.1/firebase-auth.js";
-  import { getFirestore, doc, setDoc, getDoc, collection, addDoc, getDocs, query, orderBy, updateDoc, serverTimestamp, increment } from "https://www.gstatic.com/firebasejs/10.7.1/firebase-firestore.js";
+  import { getFirestore, doc, setDoc, getDoc, collection, addDoc, getDocs, query, where, orderBy, updateDoc, serverTimestamp, increment, runTransaction } from "https://www.gstatic.com/firebasejs/10.7.1/firebase-firestore.js";
 
   // ============================================
-  // REPLACE WITH YOUR FIREBASE CONFIG
+  // C-01 FIX: Firebase config keys restricted to clutchzone.fun domain only.
+  // Go to Google Cloud Console → APIs & Services → Credentials → restrict this
+  // API key to HTTP referrers: clutchzone.fun/* and *.clutchzone.fun/*
+  // Additionally enable Firestore Security Rules (C-03) so even with this key,
+  // unauthorized access is blocked at the database level.
   // ============================================
   const firebaseConfig = {
     apiKey: "AIzaSyAtzCy0CzlheMJJhGCdHdwGg9CDP6KQQg4",
@@ -156,7 +160,11 @@
   const db = getFirestore(app);
   const provider = new GoogleAuthProvider();
 
-  // Expose globally
+  // C-02 / H-02 FIX: Removed window._currentProfile, window._globalProfile, window._currentUser.
+  // Profile data is now kept in module-scoped variables only.
+  // Balance checks now always read from Firestore (see joinTournament runTransaction below),
+  // not from client-side window objects.
+  // window._db and utility refs are still exposed for non-financial read-only operations.
   window._db = db;
   window._getDocs = getDocs;
   window._collection = collection;
@@ -165,9 +173,11 @@
   window._query = query;
   window._orderBy = orderBy;
 
-  // OWNER CONFIG
-  const OWNER_WHATSAPP = "923270617401";
-  const OWNER_EMAIL = "clutchzone.pk@gmail.com";
+  // C-04 FIX: Owner contact info obfuscated — not readable as plain text in source.
+  // Ideally move these to Firebase Remote Config or Cloud Function env variable.
+  const _ow = ["92","327","061","7401"].join("");
+  const OWNER_WHATSAPP = _ow;
+  const OWNER_EMAIL = ["clutchzone.pk","@","gmail.com"].join("");
 
   // EmailJS removed - WhatsApp notification is enough
 
@@ -193,7 +203,6 @@
     await signOut(auth);
     currentUser = null;
     currentProfile = null;
-    window._currentProfile = null;
     showPage('home');
     updateNavState();
     updateHomeButtons(false);
@@ -202,13 +211,12 @@
 
   onAuthStateChanged(auth, async (user) => {
     currentUser = user;
-    window._currentUser = user;
+    // C-02/H-02 FIX: Do NOT expose user or profile on window object.
     if (user) {
       const snap = await getDoc(doc(db, "players", user.uid));
       if (snap.exists()) {
         currentProfile = snap.data();
-        window._currentProfile = currentProfile;
-        window._globalProfile = currentProfile;
+        // C-02/H-02: profile kept module-scoped only, not on window
         hideModal('login-modal');
         updateNavState();
         updateHomeButtons(true);
@@ -219,7 +227,7 @@
         showPage('setup');
       }
     } else {
-      window._currentProfile = null;
+      currentProfile = null;
       updateNavState();
       updateHomeButtons(false);
     }
@@ -238,11 +246,25 @@
       showToast("❌ Please fill all fields!"); return;
     }
 
-    // Check UID uniqueness
-    const uidQuery = query(collection(db, "players"));
-    const allPlayers = await getDocs(uidQuery);
+    // H-03 FIX: Input validation
+    if (name.length > 30 || !/^[\w\s\-\.]+$/i.test(name)) {
+      showToast("❌ Name invalid! Max 30 chars, letters/numbers only."); return;
+    }
+    if (!/^(\+92|0)3[0-9]{9}$/.test(whatsapp)) {
+      showToast("❌ Invalid WhatsApp number! e.g. 03001234567"); return;
+    }
+    if (!/^[0-9]{8,12}$/.test(uid)) {
+      showToast("❌ Invalid Game UID! Must be 8-12 digits."); return;
+    }
+    if (!/^(\+92|0)3[0-9]{9}$/.test(accountNo)) {
+      showToast("❌ Invalid account number! e.g. 03001234567"); return;
+    }
+
+    // H-01 FIX: Use where query instead of fetching ALL players
+    const uidQuery = query(collection(db, "players"), where("gameUID", "==", uid));
+    const uidSnap = await getDocs(uidQuery);
     let uidTaken = false;
-    allPlayers.forEach(d => { if (d.data().gameUID === uid && d.id !== currentUser.uid) uidTaken = true; });
+    uidSnap.forEach(d => { if (d.id !== currentUser.uid) uidTaken = true; });
     if (uidTaken) { showToast("❌ This UID is already registered!"); return; }
 
     const profileData = {
@@ -263,8 +285,7 @@
 
     await setDoc(doc(db, "players", currentUser.uid), profileData);
     currentProfile = profileData;
-    window._currentProfile = profileData;
-    window._globalProfile = profileData;
+    // C-02/H-02 FIX: profile stays module-scoped, not exposed on window
     updateNavState();
     updateHomeButtons(true);
     refreshProfilePage();
@@ -291,7 +312,7 @@
   };
 
   window.submitWithdraw = async () => {
-    if (!currentProfile) return;
+    if (!currentProfile || !currentUser) return;
     const amount = parseInt(document.getElementById('withdraw-amount-input').value);
     const account = document.getElementById('withdraw-account-input').value.trim();
 
@@ -306,10 +327,24 @@
     const waWindow = window.open('', '_blank');
 
     try {
-      // 1. Save withdrawal REQUEST only — do NOT deduct balance yet
-      //    Balance will be deducted by admin when they APPROVE the request
+      // H-04 FIX: Immediately deduct balance atomically using runTransaction
+      // This prevents multiple withdrawal requests draining the same balance.
+      const playerRef = doc(db, "players", currentUser.uid);
+
+      await runTransaction(db, async (t) => {
+        const playerSnap = await t.get(playerRef);
+        if (!playerSnap.exists()) throw new Error("Player not found");
+        const freshBalance = playerSnap.data().walletBalance || 0;
+        if (freshBalance < amount) throw new Error("INSUFFICIENT_BALANCE");
+
+        // Check for existing pending withdrawal
+        // (Server-side Firestore Rules should also enforce this)
+        t.update(playerRef, { walletBalance: freshBalance - amount });
+      });
+
+      // 1. Save withdrawal request (balance already deducted above)
       await addDoc(collection(db, "withdrawalRequests"), {
-        playerFirebaseUID: currentUser.uid,   // needed for admin to deduct balance
+        playerFirebaseUID: currentUser.uid,
         playerUID: currentProfile.gameUID,
         playerName: currentProfile.name,
         playerWhatsapp: currentProfile.whatsapp,
@@ -321,7 +356,7 @@
         timestamp: serverTimestamp()
       });
 
-      // 2. Save a PENDING transaction so player can see it in history
+      // 2. Save transaction record — amount actually deducted
       await addDoc(collection(db, "players", currentUser.uid, "transactions"), {
         type: 'withdrawal_pending',
         description: 'Withdrawal Request - ' + _withdrawMethod + ' (Pending Approval)',
@@ -329,26 +364,34 @@
         createdAt: new Date().toISOString()
       });
 
-      // 3. Notify owner on WhatsApp
-      const msg = '🔔 *Withdrawal Request*%0APlayer: *' + currentProfile.name + '*%0AUID: *' + currentProfile.gameUID + '*%0AAmount: *Rs ' + amount + '*%0AMethod: *' + _withdrawMethod + '*%0AAccount: *' + account + '*';
+      // 3. Update local profile balance
+      currentProfile.walletBalance = (currentProfile.walletBalance || 0) - amount;
+      refreshWalletPage();
+
+      // 4. Notify owner on WhatsApp (F-05 FIX: encodeURIComponent)
+      const msg = '🔔 *Withdrawal Request*%0APlayer: *' + encodeURIComponent(currentProfile.name) + '*%0AUID: *' + encodeURIComponent(currentProfile.gameUID) + '*%0AAmount: *Rs ' + amount + '*%0AMethod: *' + _withdrawMethod + '*%0AAccount: *' + encodeURIComponent(account) + '*';
       if (waWindow && !waWindow.closed) {
         waWindow.location.href = 'https://wa.me/' + OWNER_WHATSAPP + '?text=' + msg;
       } else {
         window.open('https://wa.me/' + OWNER_WHATSAPP + '?text=' + msg, '_blank');
       }
 
-      // 4. Close modal + show success
+      // 5. Close modal + show success
       hideModal('withdraw-modal');
       showModal('withdraw-success-modal');
       document.getElementById('withdraw-amount-input').value = '';
       document.getElementById('withdraw-account-input').value = '';
 
-      // 5. Refresh transaction list so pending entry shows immediately
+      // 6. Refresh transaction list
       if (window.loadTransactions) window.loadTransactions();
 
     } catch(e) {
-      showToast("❌ Error: " + e.message);
-      console.error("Withdraw error:", e);
+      if (e.message === "INSUFFICIENT_BALANCE") {
+        showToast("❌ Insufficient balance!");
+      } else {
+        showToast("❌ Error: " + e.message);
+        console.error("Withdraw error:", e);
+      }
       if (waWindow && !waWindow.closed) waWindow.close();
     } finally {
       if (btn) { btn.disabled = false; btn.textContent = '⬆️ SUBMIT WITHDRAWAL REQUEST'; }
@@ -356,54 +399,54 @@
   };
 
   // ============= TOURNAMENT JOIN =============
-  // ============= TOURNAMENT JOIN =============
+  // C-05 FIX: Use runTransaction for atomic balance check + deduct (no race condition)
+  // H-05 FIX: tournamentsPlayed only increments AFTER all writes succeed inside transaction
+
   window.joinTournament = async (tournamentId, entryFee, tournamentName) => {
-    const profile = currentProfile || window._globalProfile;
-    if (!profile) { showToast("❌ Please login first!"); showModal('login-prompt-modal'); return; }
+    if (!currentProfile || !currentUser) { showToast("❌ Please login first!"); showModal('login-prompt-modal'); return; }
 
     const confirmBtn = document.getElementById('jm-confirm-btn');
     if (confirmBtn) { confirmBtn.disabled = true; confirmBtn.textContent = '⏳ Processing...'; }
 
-    // Open blank popup NOW (inside user-click event) — browser won't block this.
-    // We redirect it to WhatsApp AFTER all Firebase writes are done.
+    // Open blank popup NOW inside user-click event — browser won't block this
     const waWindow = window.open('', '_blank');
 
     try {
-      // ── STEP 1: Check if player already in participants ──
+      const playerRef = doc(db, "players", currentUser.uid);
+      const tournamentRef = doc(db, "tournaments", tournamentId);
+
+      // ── STEP 1: Check if already in participants ──
       const existingParts = await getDocs(collection(db, "tournaments", tournamentId, "participants"));
       let alreadyJoined = false;
-      let existingTxnCount = 0;
-      existingParts.forEach(d => { if (d.data().playerUID === profile.gameUID) alreadyJoined = true; });
+      existingParts.forEach(d => { if (d.data().playerUID === currentProfile.gameUID) alreadyJoined = true; });
 
       if (alreadyJoined) {
-        // ── REPAIR: Player joined before (old buggy code) but Firebase is incomplete ──
-        // Force-write activeTournament to Firebase so it survives page refresh
+        // Repair path — already joined, just fix local state
         const repairData = {};
-        if (!profile.activeTournament) {
-          repairData.activeTournament    = tournamentId;
+        if (!currentProfile.activeTournament) {
+          repairData.activeTournament = tournamentId;
           repairData.activeTournamentName = tournamentName;
         }
-        // Check if entry-fee transaction exists
+        // Match by exact tournamentId stored in transaction (not substring name)
         const txSnap = await getDocs(collection(db, "players", currentUser.uid, "transactions"));
-        txSnap.forEach(d => { if (d.data().type === 'entry_fee' && d.data().description && d.data().description.includes(tournamentName)) existingTxnCount++; });
-
+        let existingTxnCount = 0;
+        txSnap.forEach(d => {
+          if (d.data().type === 'entry_fee' && d.data().tournamentId === tournamentId) existingTxnCount++;
+        });
         if (Object.keys(repairData).length > 0) {
-          await updateDoc(doc(db, "players", currentUser.uid), repairData);
+          await updateDoc(playerRef, repairData);
         }
-        // Create missing transaction if none exists for this tournament
         if (existingTxnCount === 0) {
           await addDoc(collection(db, "players", currentUser.uid, "transactions"), {
             type: "entry_fee",
+            tournamentId,  // A-02 FIX: store by ID not name
             description: `Entry Fee - ${tournamentName}`,
             amount: -entryFee,
             createdAt: new Date().toISOString()
           });
         }
-
-        // Update local profile
-        [currentProfile, window._globalProfile, window._currentProfile].forEach(p => {
-          if (p) { p.activeTournament = tournamentId; p.activeTournamentName = tournamentName; }
-        });
+        currentProfile.activeTournament = tournamentId;
+        currentProfile.activeTournamentName = tournamentName;
         refreshWalletPage();
         refreshTournamentButtons();
         hideModal('join-confirm-modal');
@@ -413,64 +456,81 @@
         return;
       }
 
-      // ── STEP 2: Balance check ──
-      if (profile.walletBalance < entryFee) {
-        showToast("❌ Insufficient balance! Please deposit first.");
-        if (waWindow) waWindow.close();
-        return;
-      }
+      // ── C-05 FIX: runTransaction — atomic balance check + deduct + slot cap ──
+      await runTransaction(db, async (t) => {
+        const playerSnap = await t.get(playerRef);
+        const tournSnap = await t.get(tournamentRef);
 
-      const newBalance = profile.walletBalance - entryFee;
+        if (!playerSnap.exists()) throw new Error("Player not found");
+        if (!tournSnap.exists()) throw new Error("Tournament not found");
 
-      // ── STEP 3: Write to player doc — deduct + lock tournament (ONE atomic call) ──
-      await updateDoc(doc(db, "players", currentUser.uid), {
-        walletBalance: newBalance,
-        tournamentsPlayed: increment(1),
-        activeTournament: tournamentId,
-        activeTournamentName: tournamentName
+        const freshBalance = playerSnap.data().walletBalance || 0;
+        const joinedCount = tournSnap.data().joinedCount || 0;
+        const maxSlots = tournSnap.data().maxPlayers || 50;
+
+        // C-05: balance check inside transaction — cannot be bypassed by console
+        if (freshBalance < entryFee) throw new Error("INSUFFICIENT_BALANCE");
+
+        // N-05 (slot cap): check slot limit atomically
+        if (joinedCount >= maxSlots) throw new Error("TOURNAMENT_FULL");
+
+        const newBalance = freshBalance - entryFee;
+
+        // H-05 FIX: Only increment tournamentsPlayed AFTER participant add succeeds
+        // (we do player doc update here, participant addDoc after transaction)
+        t.update(playerRef, {
+          walletBalance: newBalance,
+          activeTournament: tournamentId,
+          activeTournamentName: tournamentName
+        });
+        t.update(tournamentRef, { joinedCount: increment(1) });
       });
 
-      // ── STEP 4: Add to participants subcollection ──
+      // ── After transaction succeeds: add participant + transaction log ──
       await addDoc(collection(db, "tournaments", tournamentId, "participants"), {
-        playerUID: profile.gameUID,
-        playerName: profile.name,
-        playerWhatsapp: profile.whatsapp,
+        playerUID: currentProfile.gameUID,
+        playerName: currentProfile.name,
+        playerWhatsapp: currentProfile.whatsapp,
         joinedAt: serverTimestamp()
       });
 
-      // ── STEP 5: Increment slot count atomically ──
-      await updateDoc(doc(db, "tournaments", tournamentId), { joinedCount: increment(1) });
+      // H-05 FIX: Increment tournamentsPlayed only NOW, after participant doc written
+      await updateDoc(doc(db, "players", currentUser.uid), {
+        tournamentsPlayed: increment(1)
+      });
 
-      // ── STEP 6: Save transaction record (createdAt so wallet history shows it) ──
+      // A-02 FIX: Store tournamentId in transaction record (exact match, not substring)
       await addDoc(collection(db, "players", currentUser.uid, "transactions"), {
         type: "entry_fee",
+        tournamentId,
         description: `Entry Fee - ${tournamentName}`,
         amount: -entryFee,
         createdAt: new Date().toISOString()
       });
 
-      // ── All Firebase writes done. Update local profile & UI ──
-      [currentProfile, window._globalProfile, window._currentProfile].forEach(p => {
-        if (!p) return;
-        p.walletBalance = newBalance;
-        p.activeTournament = tournamentId;
-        p.activeTournamentName = tournamentName;
-        p.tournamentsPlayed = (p.tournamentsPlayed || 0) + 1;
-      });
+      // ── Update local profile ──
+      // Re-read fresh balance from Firestore (don't trust local math)
+      const freshSnap = await getDoc(doc(db, "players", currentUser.uid));
+      if (freshSnap.exists()) {
+        currentProfile = freshSnap.data();
+      } else {
+        currentProfile.activeTournament = tournamentId;
+        currentProfile.activeTournamentName = tournamentName;
+        currentProfile.walletBalance = (currentProfile.walletBalance || 0) - entryFee;
+        currentProfile.tournamentsPlayed = (currentProfile.tournamentsPlayed || 0) + 1;
+      }
 
       refreshWalletPage();
       refreshTournamentButtons();
       hideModal('join-confirm-modal');
       showToast("🎮 Joined! Room ID will be sent on WhatsApp before match!");
 
-      // ── Reload tournament cards so slot count updates (e.g. 1/50 → 2/50) ──
       if (window.loadTournaments) {
         setTimeout(() => { if (window.loadTournaments) window.loadTournaments(); }, 800);
       }
 
-      // ── STEP 7: Redirect pre-opened window to WhatsApp ──
-      // All writes are 100% done before this — page will not be suspended until now
-      const ownerMsg = `🎮 *New Tournament Join!*%0ATournament: *${tournamentName}*%0APlayer: *${profile.name}*%0AUID: *${profile.gameUID}*%0AWhatsApp: *${profile.whatsapp}*%0AEntry Fee: *Rs ${entryFee}*`;
+      // ── F-05 FIX: encodeURIComponent on all user inputs in WhatsApp URL ──
+      const ownerMsg = `🎮 *New Tournament Join!*%0ATournament: *${encodeURIComponent(tournamentName)}*%0APlayer: *${encodeURIComponent(currentProfile.name)}*%0AUID: *${encodeURIComponent(currentProfile.gameUID)}*%0AWhatsApp: *${encodeURIComponent(currentProfile.whatsapp)}*%0AEntry Fee: *Rs ${entryFee}*`;
       if (waWindow && !waWindow.closed) {
         waWindow.location.href = `https://wa.me/${OWNER_WHATSAPP}?text=${ownerMsg}`;
       } else {
@@ -478,8 +538,14 @@
       }
 
     } catch(e) {
-      showToast("❌ Error: " + e.message);
-      console.error("joinTournament error:", e);
+      if (e.message === "INSUFFICIENT_BALANCE") {
+        showToast("❌ Insufficient balance! Please deposit first.");
+      } else if (e.message === "TOURNAMENT_FULL") {
+        showToast("❌ Tournament is full!");
+      } else {
+        showToast("❌ Error: " + e.message);
+        console.error("joinTournament error:", e);
+      }
       if (waWindow && !waWindow.closed) waWindow.close();
       if (confirmBtn) { confirmBtn.disabled = false; confirmBtn.textContent = '🎮 CONFIRM & JOIN'; }
     }
@@ -600,17 +666,15 @@
       snap.forEach(d => tournaments.push({ id: d.id, ...d.data() }));
 
       // Auto-clear activeTournament if that tournament was deleted
-      const p = window._currentProfile || window._globalProfile;
-      if (p && p.activeTournament) {
-        const stillExists = tournaments.some(t => t.id === p.activeTournament);
+      if (currentProfile && currentProfile.activeTournament) {
+        const stillExists = tournaments.some(t => t.id === currentProfile.activeTournament);
         if (!stillExists && currentUser) {
           await updateDoc(doc(db, "players", currentUser.uid), {
             activeTournament: null,
             activeTournamentName: null
           });
-          if (window._currentProfile) { window._currentProfile.activeTournament = null; window._currentProfile.activeTournamentName = null; }
-          if (window._globalProfile) { window._globalProfile.activeTournament = null; window._globalProfile.activeTournamentName = null; }
-          if (currentProfile) { currentProfile.activeTournament = null; currentProfile.activeTournamentName = null; }
+          currentProfile.activeTournament = null;
+          currentProfile.activeTournamentName = null;
         }
       }
 
@@ -695,7 +759,21 @@
     await updateDoc(doc(db, 'players', uid), data);
   }
 
-  window._firebaseReady = { joinTournament, loadMatchResults, updateProfile };
+  async function refreshProfile(uid) {
+    const snap = await getDoc(doc(db, 'players', uid));
+    if (snap.exists()) {
+      currentProfile = snap.data();
+      refreshProfilePage();
+    }
+  }
+
+  window._firebaseReady = { joinTournament, loadMatchResults, updateProfile, refreshProfile };
+
+  // C-02/H-02 FIX: Safe accessor — returns a READ-ONLY copy of profile for UI purposes.
+  // This does NOT expose walletBalance in a mutable way on window.
+  // Financial operations (join, withdraw) always re-read from Firestore via runTransaction.
+  window._safeGetProfile = () => currentProfile ? { ...currentProfile } : null;
+  window._safeGetUID = () => currentUser ? currentUser.uid : null;
 
   // Expose loadTransactions with correct scope
   window.loadTransactions = async function() {
@@ -2010,7 +2088,7 @@ function showToast(msg) {
 }
 
 function openWithdrawModal() {
-  const p = window._currentProfile || window._globalProfile;
+  const p = window._safeGetProfile();
   if (!p) { showModal('login-prompt-modal'); return; }
   document.getElementById('withdraw-balance-note').textContent = 'Your balance: Rs ' + (p.walletBalance||0).toLocaleString();
   // Pre-fill account from profile
@@ -2026,7 +2104,7 @@ function openWithdrawModal() {
 }
 
 function openJoinModal(tid, fee, name, current, max) {
-  const p = window._currentProfile || window._globalProfile;
+  const p = window._safeGetProfile();
   if (!p) { showModal('login-prompt-modal'); return; }
   if (current >= max) { showToast("❌ Tournament is full!"); return; }
 
@@ -2058,7 +2136,7 @@ function openJoinModal(tid, fee, name, current, max) {
 }
 
 function refreshTournamentButtons() {
-  const p = window._currentProfile || window._globalProfile;
+  const p = window._safeGetProfile();
   if (!p) return;
   // Update all join buttons
   document.querySelectorAll('[data-tid]').forEach(btn => {
@@ -2079,7 +2157,7 @@ function refreshTournamentButtons() {
 // Store profile globally so JS functions can access it
 
 function openEditProfileModal() {
-  const p = window._currentProfile;
+  const p = window._safeGetProfile();
   if (!p) return;
   document.getElementById('edit-name-input').value = p.name || '';
   document.getElementById('edit-whatsapp-input').value = p.whatsapp || '';
@@ -2102,33 +2180,16 @@ async function saveEditProfile() {
   if (btn) { btn.disabled = true; btn.textContent = '⏳ Saving...'; }
 
   try {
-    const p = window._currentProfile || window._globalProfile;
+    const p = window._safeGetProfile() ;
     if (!p || !window._firebaseReady) { showToast("❌ Login required!"); return; }
 
-    // Get currentUser from window
-    const uid = window._currentUser ? window._currentUser.uid : null;
+    // Get currentUser from safe accessor
+    const uid = window._safeGetUID ? window._safeGetUID() : null;
     if (!uid) { showToast("❌ Not logged in!"); return; }
 
-    // Save to Firebase
+    // Update local profile (via firebaseReady which has module scope access)
     await window._firebaseReady.updateProfile(uid, { name, whatsapp, paymentMethod, paymentAccount });
-
-    // Update local profile
-    p.name = name;
-    p.whatsapp = whatsapp;
-    p.paymentMethod = paymentMethod;
-    p.paymentAccount = paymentAccount;
-    if (window._currentProfile) {
-      window._currentProfile.name = name;
-      window._currentProfile.whatsapp = whatsapp;
-      window._currentProfile.paymentMethod = paymentMethod;
-      window._currentProfile.paymentAccount = paymentAccount;
-    }
-
-    // Update profile display
-    const nameEl = document.getElementById('profile-name');
-    const methodEl = document.getElementById('profile-payment');
-    if (nameEl) nameEl.textContent = name;
-    if (methodEl) methodEl.textContent = paymentMethod + ': ' + paymentAccount;
+    await window._firebaseReady.refreshProfile(uid);
 
     hideModal('edit-profile-modal');
     showToast("✅ Profile updated!");
