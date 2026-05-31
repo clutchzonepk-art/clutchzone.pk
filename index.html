@@ -107,7 +107,7 @@
           "name": "How can I earn money by playing Free Fire?",
           "acceptedAnswer": {
             "@type": "Answer",
-            "text": "Join ClutchZone Free Fire tournaments by paying Rs 70 entry fee. Earn Rs 20 per kill plus win up to Rs 600 as 1st place prize. Withdraw winnings via JazzCash or EasyPaisa anytime above Rs 500."
+            "text": "Join ClutchZone Free Fire tournaments by paying Rs 70 entry fee. Earn Rs 20 per kill plus win up to Rs 600 as 1st place prize. Withdraw winnings via JazzCash or EasyPaisa anytime above Rs 100."
           }
         },
         {
@@ -162,16 +162,8 @@
 
   // C-02 / H-02 FIX: Removed window._currentProfile, window._globalProfile, window._currentUser.
   // Profile data is now kept in module-scoped variables only.
-  // Balance checks now always read from Firestore (see joinTournament runTransaction below),
-  // not from client-side window objects.
-  // window._db and utility refs are still exposed for non-financial read-only operations.
-  window._db = db;
-  window._getDocs = getDocs;
-  window._collection = collection;
-  window._addDoc = addDoc;
-  window._doc = doc;
-  window._query = query;
-  window._orderBy = orderBy;
+  // XSS FIX: window._db, _getDocs, _collection, _addDoc, _doc, _query, _orderBy all REMOVED.
+  // These are no longer exposed on window — use window._firebaseReady.* for all DB operations.
 
   // C-04 FIX: Owner contact info obfuscated — not readable as plain text in source.
   // Ideally move these to Firebase Remote Config or Cloud Function env variable.
@@ -590,10 +582,10 @@
         return `
           <div class="result-podium-item">
             <div class="result-medal">${p.medal}</div>
-            <div class="result-winner-name">${w.name || '---'}</div>
-            <div class="result-winner-uid">UID: ${w.uid || '---'}</div>
+            <div class="result-winner-name">${escHtml(w.name || '---')}</div>
+            <div class="result-winner-uid">UID: ${escHtml(w.uid || '---')}</div>
             <div class="result-winner-prize" style="color:${p.color}">Rs ${(w.prize||0).toLocaleString()}</div>
-            ${w.kills ? `<div class="result-winner-kills">💀 ${w.kills} kills</div>` : ''}
+            ${w.kills ? `<div class="result-winner-kills">💀 ${escHtml(String(w.kills))} kills</div>` : ''}
           </div>`;
       }).join('');
       const topKiller = r.topKiller;
@@ -601,8 +593,8 @@
         <div class="result-card">
           <div class="result-header">
             <div>
-              <div class="result-title">${r.tournamentName || 'Tournament'}</div>
-              <div class="result-date">📅 ${date}</div>
+              <div class="result-title">${escHtml(r.tournamentName || 'Tournament')}</div>
+              <div class="result-date">📅 ${escHtml(date)}</div>
             </div>
             <div class="result-badge-done">✅ Completed</div>
           </div>
@@ -610,7 +602,7 @@
           ${topKiller ? `
           <div class="result-killer-row">
             <span>💀 Top Fragger</span>
-            <span style="font-weight:700;color:var(--red)">${topKiller.name} — ${topKiller.kills} kills</span>
+            <span style="font-weight:700;color:var(--red)">${escHtml(topKiller.name)} — ${escHtml(String(topKiller.kills))} kills</span>
           </div>` : ''}
           ${r.totalPlayers ? `
           <div class="result-footer-row">
@@ -767,7 +759,30 @@
     }
   }
 
-  window._firebaseReady = { joinTournament, loadMatchResults, updateProfile, refreshProfile };
+  // Internal module functions for announcements, polls, support (replaces window._db exposure)
+  async function getAnnouncements() {
+    const snap = await getDocs(collection(db, 'announcements'));
+    const docs = [];
+    snap.forEach(d => docs.push({id: d.id, ...d.data()}));
+    return docs;
+  }
+
+  async function getAnnouncementById(annId) {
+    const snap = await getDocs(collection(db, 'announcements'));
+    let result = null;
+    snap.forEach(d => { if (d.id === annId) result = d.data(); });
+    return result;
+  }
+
+  async function updateAnnouncementVotes(annId, votes) {
+    await updateDoc(doc(db, 'announcements', annId), { votes });
+  }
+
+  async function submitSupportRequest(data) {
+    await addDoc(collection(db, 'supportRequests'), data);
+  }
+
+  window._firebaseReady = { joinTournament, loadMatchResults, updateProfile, refreshProfile, getAnnouncements, getAnnouncementById, updateAnnouncementVotes, submitSupportRequest };
 
   // C-02/H-02 FIX: Safe accessor — returns a READ-ONLY copy of profile for UI purposes.
   // This does NOT expose walletBalance in a mutable way on window.
@@ -1772,7 +1787,7 @@ nav {
       </div>
       <div class="step">
         <div class="step-num">4</div>
-        <div><div class="step-title">Win & Withdraw</div><div class="step-desc">Win prizes + Rs 20/kill. Withdraw anytime (min Rs 500) to JazzCash/EasyPaisa.</div></div>
+        <div><div class="step-title">Win & Withdraw</div><div class="step-desc">Win prizes + Rs 20/kill. Withdraw anytime (min Rs 100) to JazzCash/EasyPaisa.</div></div>
       </div>
     </div>
   </div>
@@ -2176,6 +2191,17 @@ async function saveEditProfile() {
   if (!name) { showToast("❌ Name nahi ho sakta empty!"); return; }
   if (!whatsapp) { showToast("❌ WhatsApp number required!"); return; }
 
+  // H-03 FIX: Same validation as submitProfile
+  if (name.length > 30 || !/^[\w\s\-\.]+$/i.test(name)) {
+    showToast("❌ Name invalid! Max 30 chars, letters/numbers only."); return;
+  }
+  if (!/^(\+92|0)3[0-9]{9}$/.test(whatsapp)) {
+    showToast("❌ Invalid WhatsApp! e.g. 03001234567"); return;
+  }
+  if (paymentAccount && !/^(\+92|0)3[0-9]{9}$/.test(paymentAccount)) {
+    showToast("❌ Invalid account number! e.g. 03001234567"); return;
+  }
+
   const btn = document.querySelector('#edit-profile-modal .btn-gold');
   if (btn) { btn.disabled = true; btn.textContent = '⏳ Saving...'; }
 
@@ -2211,11 +2237,9 @@ function switchLbTab(btn, period) {
 async function loadAnnouncements() {
   const list = document.getElementById('announcements-list');
   const section = document.getElementById('announcements-section');
-  if (!list || !window._db) return;
+  if (!list || !window._firebaseReady) return;
   try {
-    const snap = await window._getDocs(window._collection(window._db, 'announcements'));
-    const docs = [];
-    snap.forEach(d => docs.push({id: d.id, ...d.data()}));
+    const docs = await window._firebaseReady.getAnnouncements();
     docs.sort((a,b) => (b.pinned?1:0)-(a.pinned?1:0) || (b.createdAt||'').localeCompare(a.createdAt||''));
     if (docs.length === 0) { section.style.display = 'none'; return; }
     section.style.display = 'block';
@@ -2224,20 +2248,30 @@ async function loadAnnouncements() {
   } catch(e) { section.style.display = 'none'; console.log('Ann error:', e); }
 }
 
+// XSS FIX: Escape all Firestore data before inserting into innerHTML
+function escHtml(s) {
+  return String(s == null ? '' : s)
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#x27;');
+}
+
 function buildAnnouncementCard(id, a) {
   const timeAgo = getTimeAgo(a.createdAt);
   const pollHTML = a.type === 'poll' ? buildPollHTML(id, a) : '';
   return `
   <div class="ann-card ${a.pinned ? 'pinned' : ''}">
     <div class="ann-header">
-      <div class="ann-emoji">${a.emoji || '📢'}</div>
+      <div class="ann-emoji">${escHtml(a.emoji || '📢')}</div>
       <div class="ann-meta">
-        <div class="ann-title">${a.title}</div>
-        <div class="ann-time">${timeAgo}</div>
+        <div class="ann-title">${escHtml(a.title)}</div>
+        <div class="ann-time">${escHtml(timeAgo)}</div>
       </div>
       ${a.pinned ? '<span class="ann-pin-badge">📌 Pinned</span>' : ''}
     </div>
-    <div class="ann-body">${a.message || ''}</div>
+    <div class="ann-body">${escHtml(a.message || '')}</div>
     ${pollHTML}
   </div>`;
 }
@@ -2254,7 +2288,7 @@ function buildPollHTML(id, a) {
     const isVoted = userVoted == i;
     html += `<div class="poll-option ${userVoted !== null ? 'voted' : ''}" onclick="${userVoted === null ? `votePoll('${id}', ${i}, ${opts.length})` : ''}">
       <div class="poll-bar-wrap">
-        <div class="poll-label">${isVoted ? '✅ ' : ''}${opt}</div>
+        <div class="poll-label">${isVoted ? '✅ ' : ''}${escHtml(opt)}</div>
         ${userVoted !== null ? `<div class="poll-bar"><div class="poll-fill" style="width:${pct}%"></div></div>` : ''}
       </div>
       ${userVoted !== null ? `<div class="poll-pct">${pct}%</div>` : ''}
@@ -2268,15 +2302,11 @@ async function votePoll(annId, optIndex, totalOpts) {
   const stored = localStorage.getItem('poll_' + annId);
   if (stored !== null) { showToast("⚠️ Already voted!"); return; }
   try {
-    const ref = window._doc(window._db, 'announcements', annId);
-    const snap = await window._getDocs(window._collection(window._db, 'announcements'));
-    let docData = null;
-    snap.forEach(d => { if (d.id === annId) docData = d.data(); });
+    const docData = await window._firebaseReady.getAnnouncementById(annId);
     if (!docData) return;
     const votes = docData.votes || new Array(totalOpts).fill(0);
     votes[optIndex] = (votes[optIndex] || 0) + 1;
-    const { updateDoc } = await import("https://www.gstatic.com/firebasejs/10.7.1/firebase-firestore.js");
-    await updateDoc(ref, { votes });
+    await window._firebaseReady.updateAnnouncementVotes(annId, votes);
     localStorage.setItem('poll_' + annId, optIndex);
     showToast("✅ Vote recorded!");
     loadAnnouncements();
@@ -2312,7 +2342,7 @@ async function submitSupportRequest() {
   if (!name || !wa || !msg) { showToast("❌ Please fill all fields!"); return; }
 
   try {
-    await window._addDoc(window._collection(window._db, 'supportRequests'), {
+    await window._firebaseReady.submitSupportRequest({
       name, whatsapp: wa, issueType: type, message: msg,
       status: 'pending', createdAt: new Date().toISOString()
     });
@@ -2379,7 +2409,7 @@ document.addEventListener('DOMContentLoaded', () => {
         <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><path d="M18 2h-3a5 5 0 0 0-5 5v3H7v4h3v8h4v-8h3l1-4h-4V7a1 1 0 0 1 1-1h3z"/></svg>
         Facebook
       </a>
-      <a class="footer-social-btn fsb-instagram" href="http://instagram.com/clutchzone.pk" target="_blank" rel="noopener">
+      <a class="footer-social-btn fsb-instagram" href="https://instagram.com/clutchzone.pk" target="_blank" rel="noopener">
         <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="2" y="2" width="20" height="20" rx="5" ry="5"/><circle cx="12" cy="12" r="3"/><circle cx="17.5" cy="6.5" r="1" fill="currentColor" stroke="none"/></svg>
         Instagram
       </a>
