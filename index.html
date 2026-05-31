@@ -239,8 +239,11 @@
     }
 
     // H-03 FIX: Input validation
-    if (name.length > 30 || !/^[\w\s\-\.]+$/i.test(name)) {
-      showToast("❌ Name invalid! Max 30 chars, letters/numbers only."); return;
+    if (name.length < 2) {
+      showToast("❌ Name too short! Min 2 characters."); return;
+    }
+    if (name.length > 20) {
+      showToast("❌ Name too long! Max 20 characters."); return;
     }
     if (!/^(\+92|0)3[0-9]{9}$/.test(whatsapp)) {
       showToast("❌ Invalid WhatsApp number! e.g. 03001234567"); return;
@@ -251,6 +254,13 @@
     if (!/^(\+92|0)3[0-9]{9}$/.test(accountNo)) {
       showToast("❌ Invalid account number! e.g. 03001234567"); return;
     }
+
+    // Name uniqueness check
+    const nameQuery = query(collection(db, "players"), where("name", "==", name));
+    const nameSnap = await getDocs(nameQuery);
+    let nameTaken = false;
+    nameSnap.forEach(d => { if (d.id !== currentUser.uid) nameTaken = true; });
+    if (nameTaken) { showToast("❌ Name already taken! Choose a different name."); return; }
 
     // H-01 FIX: Use where query instead of fetching ALL players
     const uidQuery = query(collection(db, "players"), where("gameUID", "==", uid));
@@ -782,7 +792,15 @@
     await addDoc(collection(db, 'supportRequests'), data);
   }
 
-  window._firebaseReady = { joinTournament, loadMatchResults, updateProfile, refreshProfile, getAnnouncements, getAnnouncementById, updateAnnouncementVotes, submitSupportRequest };
+  async function isNameTaken(name, currentUid) {
+    const q = query(collection(db, "players"), where("name", "==", name));
+    const snap = await getDocs(q);
+    let taken = false;
+    snap.forEach(d => { if (d.id !== currentUid) taken = true; });
+    return taken;
+  }
+
+  window._firebaseReady = { joinTournament, loadMatchResults, updateProfile, refreshProfile, getAnnouncements, getAnnouncementById, updateAnnouncementVotes, submitSupportRequest, isNameTaken };
 
   // C-02/H-02 FIX: Safe accessor — returns a READ-ONLY copy of profile for UI purposes.
   // This does NOT expose walletBalance in a mutable way on window.
@@ -1915,7 +1933,7 @@ nav {
 
     <div class="form-group">
       <label class="form-label">Your Name (In-Game Name)</label>
-      <input type="text" class="form-input" id="setup-name" placeholder="e.g. ProGamer_PK">
+      <input type="text" class="form-input" id="setup-name" placeholder="e.g. ꧁ProGamer꧂  (max 20 chars)" maxlength="20">
     </div>
 
     <div class="form-group">
@@ -2192,8 +2210,11 @@ async function saveEditProfile() {
   if (!whatsapp) { showToast("❌ WhatsApp number required!"); return; }
 
   // H-03 FIX: Same validation as submitProfile
-  if (name.length > 30 || !/^[\w\s\-\.]+$/i.test(name)) {
-    showToast("❌ Name invalid! Max 30 chars, letters/numbers only."); return;
+  if (name.length < 2) {
+    showToast("❌ Name too short! Min 2 characters."); return;
+  }
+  if (name.length > 20) {
+    showToast("❌ Name too long! Max 20 characters."); return;
   }
   if (!/^(\+92|0)3[0-9]{9}$/.test(whatsapp)) {
     showToast("❌ Invalid WhatsApp! e.g. 03001234567"); return;
@@ -2203,7 +2224,21 @@ async function saveEditProfile() {
   }
 
   const btn = document.querySelector('#edit-profile-modal .btn-gold');
-  if (btn) { btn.disabled = true; btn.textContent = '⏳ Saving...'; }
+  if (btn) { btn.disabled = true; btn.textContent = '⏳ Checking...'; }
+
+  // Name uniqueness check — only if name changed
+  const currentP = window._safeGetProfile();
+  const currentUid = window._safeGetUID ? window._safeGetUID() : null;
+  if (currentP && name !== currentP.name) {
+    const nameTaken = await window._firebaseReady.isNameTaken(name, currentUid);
+    if (nameTaken) {
+      showToast("❌ Name already taken! Choose a different name.");
+      if (btn) { btn.disabled = false; btn.textContent = '💾 SAVE CHANGES'; }
+      return;
+    }
+  }
+
+  if (btn) btn.textContent = '⏳ Saving...';
 
   try {
     const p = window._safeGetProfile() ;
@@ -2374,7 +2409,7 @@ document.addEventListener('DOMContentLoaded', () => {
     </div>
     <div class="form-group">
       <label class="form-label">Display Name</label>
-      <input type="text" class="form-input" id="edit-name-input" placeholder="Your name">
+      <input type="text" class="form-input" id="edit-name-input" placeholder="Your name (max 20 chars)" maxlength="20">
     </div>
     <div class="form-group">
       <label class="form-label">WhatsApp Number</label>
