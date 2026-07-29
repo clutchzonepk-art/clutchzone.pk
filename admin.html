@@ -1008,7 +1008,54 @@ function switchTab(n, btn) {
 }
 
 // ===== EXPORT WHATSAPP NUMBERS FOR WASENDER =====
+function normalizeWA(raw) {
+  let num = (raw || '').replace(/\D/g, '').trim();
+  if (!num) return '';
+  if (num.startsWith('0')) num = '92' + num.slice(1);
+  if (!num.startsWith('92')) num = '92' + num;
+  return num.length >= 11 ? num : '';
+}
+
 async function exportWhatsAppNumbers() {
+  try {
+    showToast('⏳ Tournaments load ho rahe hain...');
+    const tSnap = await window._getDocs(window._collection(window._db, 'tournaments'));
+    const tOpts = [];
+    tSnap.forEach(d => {
+      const t = d.data();
+      tOpts.push(`<option value="${d.id}">${t.name || 'Untitled'}</option>`);
+    });
+
+    const modal = document.createElement('div');
+    modal.id = 'export-choice-modal';
+    modal.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.85);z-index:9999;display:flex;align-items:center;justify-content:center;padding:20px';
+    modal.innerHTML = `
+      <div style="background:#1a1a2e;border:1px solid #333;border-radius:16px;padding:24px;max-width:420px;width:100%">
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:16px">
+          <h3 style="color:#25D366;margin:0">📋 Export Numbers</h3>
+          <button onclick="this.closest('div[style*=fixed]').remove()" style="background:none;border:none;color:#fff;font-size:20px;cursor:pointer">✕</button>
+        </div>
+        <button class="abtn" style="width:100%;background:#25D366;color:#fff;margin-bottom:10px;padding:12px" onclick="document.getElementById('export-choice-modal').remove();exportAllNumbers()">
+          📤 Export All Players
+        </button>
+        <div style="border-top:1px solid #333;margin:14px 0;padding-top:14px">
+          <p style="color:#aaa;font-size:13px;margin-bottom:8px">Ya sirf un players ko export karo jo neeche wale tournament mein <b>join nahi</b> kiye:</p>
+          <select id="export-tid-select" class="fi" style="width:100%;margin-bottom:10px;background:#0d0d1a;color:#fff;border:1px solid #333;border-radius:8px;padding:8px">
+            <option value="">-- Tournament Select Karo --</option>
+            ${tOpts.join('')}
+          </select>
+          <button class="abtn" style="width:100%;background:#e67e22;color:#fff;padding:12px" onclick="exportNonJoiners()">
+            📤 Export Non-Joiners
+          </button>
+        </div>
+      </div>`;
+    document.body.appendChild(modal);
+  } catch(e) {
+    showToast('❌ Error: ' + e.message);
+  }
+}
+
+async function exportAllNumbers() {
   try {
     showToast('⏳ Numbers export ho rahe hain...');
     const snap = await window._getDocs(window._collection(window._db, 'players'));
@@ -1016,54 +1063,84 @@ async function exportWhatsAppNumbers() {
 
     const numbers = [];
     snap.forEach(d => {
-      const p = d.data();
-      let num = (p.whatsapp || '').replace(/\D/g, '').trim();
-      if (!num) return;
-      // Normalize to international format (92xxxxxxxxxx)
-      if (num.startsWith('0')) num = '92' + num.slice(1);
-      if (!num.startsWith('92')) num = '92' + num;
-      if (num.length >= 11) numbers.push(num);
+      const num = normalizeWA(d.data().whatsapp);
+      if (num) numbers.push(num);
     });
 
-    if (numbers.length === 0) {
-      showToast('❌ Kisi player ka WhatsApp number nahi mila!');
-      return;
-    }
-
-    // Create CSV content for WASender
-    const csvContent = 'Phone\n' + numbers.join('\n');
-    const blob = new Blob([csvContent], { type: 'text/csv' });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = 'clutchzone_players_' + numbers.length + '.csv';
-    a.click();
-    URL.revokeObjectURL(url);
-
-    // Also show numbers in a copyable popup
-    const modal = document.createElement('div');
-    modal.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.85);z-index:9999;display:flex;align-items:center;justify-content:center;padding:20px';
-    modal.innerHTML = `
-      <div style="background:#1a1a2e;border:1px solid #333;border-radius:16px;padding:24px;max-width:500px;width:100%;max-height:80vh;overflow-y:auto">
-        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:16px">
-          <h3 style="color:#25D366;margin:0">📱 ${numbers.length} Numbers Exported</h3>
-          <button onclick="this.closest('div[style*=fixed]').remove()" style="background:none;border:none;color:#fff;font-size:20px;cursor:pointer">✕</button>
-        </div>
-        <p style="color:#aaa;font-size:13px;margin-bottom:12px">CSV file download ho gayi. WASender mein import karo.<br>Ya neeche se copy karo:</p>
-        <textarea id="num-export-area" style="width:100%;height:180px;background:#0d0d1a;color:#25D366;border:1px solid #333;border-radius:8px;padding:10px;font-size:13px;resize:none">${numbers.join('\n')}</textarea>
-        <div style="display:flex;gap:8px;margin-top:12px">
-          <button onclick="navigator.clipboard.writeText(document.getElementById('num-export-area').value);this.textContent='✅ Copied!'" 
-            style="flex:1;background:#25D366;color:#fff;border:none;border-radius:8px;padding:10px;cursor:pointer;font-weight:700">
-            📋 Copy All Numbers
-          </button>
-        </div>
-        <p style="color:#666;font-size:11px;margin-top:10px">Total: ${numbers.length} numbers | WASender CSV format ready</p>
-      </div>`;
-    document.body.appendChild(modal);
-    showToast('✅ ' + numbers.length + ' numbers export ho gaye!');
+    finishExport(numbers, 'clutchzone_all_players');
   } catch(e) {
     showToast('❌ Error: ' + e.message);
   }
+}
+
+async function exportNonJoiners() {
+  const sel = document.getElementById('export-tid-select');
+  const tid = sel ? sel.value : '';
+  if (!tid) { showToast('❌ Pehle tournament select karo!'); return; }
+
+  try {
+    showToast('⏳ Numbers export ho rahe hain...');
+    document.getElementById('export-choice-modal')?.remove();
+
+    // Numbers of players who already joined this tournament
+    const partsSnap = await window._getDocs(window._collection(window._db, 'tournaments', tid, 'participants'));
+    const joinedSet = new Set();
+    partsSnap.forEach(d => {
+      const num = normalizeWA(d.data().playerWhatsapp);
+      if (num) joinedSet.add(num);
+    });
+
+    // All players, minus the ones who joined
+    const pSnap = await window._getDocs(window._collection(window._db, 'players'));
+    if (pSnap.empty) { showToast('❌ Koi player nahi mila!'); return; }
+
+    const numbers = [];
+    pSnap.forEach(d => {
+      const num = normalizeWA(d.data().whatsapp);
+      if (num && !joinedSet.has(num)) numbers.push(num);
+    });
+
+    finishExport(numbers, 'clutchzone_non_joiners');
+  } catch(e) {
+    showToast('❌ Error: ' + e.message);
+  }
+}
+
+function finishExport(numbers, filePrefix) {
+  if (numbers.length === 0) {
+    showToast('❌ Koi number nahi mila export karne ke liye!');
+    return;
+  }
+
+  const csvContent = 'Phone\n' + numbers.join('\n');
+  const blob = new Blob([csvContent], { type: 'text/csv' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = filePrefix + '_' + numbers.length + '.csv';
+  a.click();
+  URL.revokeObjectURL(url);
+
+  const modal = document.createElement('div');
+  modal.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.85);z-index:9999;display:flex;align-items:center;justify-content:center;padding:20px';
+  modal.innerHTML = `
+    <div style="background:#1a1a2e;border:1px solid #333;border-radius:16px;padding:24px;max-width:500px;width:100%;max-height:80vh;overflow-y:auto">
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:16px">
+        <h3 style="color:#25D366;margin:0">📱 ${numbers.length} Numbers Exported</h3>
+        <button onclick="this.closest('div[style*=fixed]').remove()" style="background:none;border:none;color:#fff;font-size:20px;cursor:pointer">✕</button>
+      </div>
+      <p style="color:#aaa;font-size:13px;margin-bottom:12px">CSV file download ho gayi. WASender mein import karo.<br>Ya neeche se copy karo:</p>
+      <textarea id="num-export-area" style="width:100%;height:180px;background:#0d0d1a;color:#25D366;border:1px solid #333;border-radius:8px;padding:10px;font-size:13px;resize:none">${numbers.join('\n')}</textarea>
+      <div style="display:flex;gap:8px;margin-top:12px">
+        <button onclick="navigator.clipboard.writeText(document.getElementById('num-export-area').value);this.textContent='✅ Copied!'" 
+          style="flex:1;background:#25D366;color:#fff;border:none;border-radius:8px;padding:10px;cursor:pointer;font-weight:700">
+          📋 Copy All Numbers
+        </button>
+      </div>
+      <p style="color:#666;font-size:11px;margin-top:10px">Total: ${numbers.length} numbers | WASender CSV format ready</p>
+    </div>`;
+  document.body.appendChild(modal);
+  showToast('✅ ' + numbers.length + ' numbers export ho gaye!');
 }
 function showModal(id) { document.getElementById(id).classList.add('active'); }
 function hideModal(id) { document.getElementById(id).classList.remove('active'); }
