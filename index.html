@@ -21,6 +21,13 @@
 <link rel="icon" type="image/png" href="/logo.png">
 <link rel="apple-touch-icon" href="/logo.png">
 
+<!-- ===== PWA ===== -->
+<link rel="manifest" href="/manifest.json">
+<meta name="theme-color" content="#F5A623">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="ClutchZone">
+
 <!-- ===== OPEN GRAPH (Facebook / WhatsApp) ===== -->
 <meta property="og:type" content="website">
 <meta property="og:site_name" content="ClutchZone">
@@ -138,6 +145,7 @@
   import { initializeApp } from "https://www.gstatic.com/firebasejs/10.7.1/firebase-app.js";
   import { getAuth, signInWithPopup, GoogleAuthProvider, signOut, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/10.7.1/firebase-auth.js";
   import { getFirestore, doc, setDoc, getDoc, collection, addDoc, getDocs, query, where, orderBy, updateDoc, serverTimestamp, increment, runTransaction } from "https://www.gstatic.com/firebasejs/10.7.1/firebase-firestore.js";
+  import { getMessaging, getToken, onMessage } from "https://www.gstatic.com/firebasejs/10.7.1/firebase-messaging.js";
 
   // ============================================
   // C-01 FIX: Firebase config keys restricted to clutchzone.fun domain only.
@@ -159,6 +167,39 @@
   const auth = getAuth(app);
   const db = getFirestore(app);
   const provider = new GoogleAuthProvider();
+
+  // ============================================
+  // PWA / FCM PUSH NOTIFICATIONS
+  // Replace VAPID_KEY_HERE below with your Web Push certificate key from
+  // Firebase Console → Project Settings → Cloud Messaging → Web Push certificates
+  // ============================================
+  const VAPID_KEY = "BJ41nlhBtRAfRbMFrpLL2GX0yn2uakzHwNiSbVDDsztGGp6XPSQIEz-GyhnQx0Mu1AxEn-bI1mkKba6Eutc72nU";
+  let messaging = null;
+  try { messaging = getMessaging(app); } catch (e) { /* messaging unsupported (e.g. no SW support) */ }
+
+  async function setupPushNotifications(uid) {
+    if (!messaging || !('serviceWorker' in navigator)) return;
+    try {
+      const reg = await navigator.serviceWorker.register('/firebase-messaging-sw.js');
+      const permission = await Notification.requestPermission();
+      if (permission !== 'granted') return;
+      const token = await getToken(messaging, { vapidKey: VAPID_KEY, serviceWorkerRegistration: reg });
+      if (token) {
+        await setDoc(doc(db, "players", uid), { fcmToken: token }, { merge: true });
+      }
+    } catch (err) {
+      console.warn('Push setup skipped:', err.message);
+    }
+  }
+
+  // Foreground messages (app open) — show a toast instead of OS notification
+  if (messaging) {
+    onMessage(messaging, (payload) => {
+      const title = payload.notification?.title || "ClutchZone";
+      const body = payload.notification?.body || "";
+      if (window.showToast) window.showToast(`🔔 ${title}: ${body}`);
+    });
+  }
 
   // C-02 / H-02 FIX: Removed window._currentProfile, window._globalProfile, window._currentUser.
   // Profile data is now kept in module-scoped variables only.
@@ -215,6 +256,7 @@
         refreshProfilePage();
         refreshWalletPage();
         refreshTournamentButtons();
+        setupPushNotifications(user.uid);
       } else {
         showPage('setup');
       }
@@ -294,6 +336,7 @@
     refreshWalletPage();
     showPage('home');
     showToast("✅ Profile created! Welcome to Clutch Zone!");
+    setupPushNotifications(currentUser.uid);
   };
 
   // ============= WALLET =============
