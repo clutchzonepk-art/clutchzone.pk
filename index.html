@@ -177,10 +177,19 @@
   let messaging = null;
   try { messaging = getMessaging(app); } catch (e) { /* messaging unsupported (e.g. no SW support) */ }
 
+  // Register the service worker immediately (unauthenticated too) — this is required
+  // for Chrome to consider the site installable as a PWA, not just for push.
+  let swRegistration = null;
+  if ('serviceWorker' in navigator) {
+    navigator.serviceWorker.register('/firebase-messaging-sw.js')
+      .then(reg => { swRegistration = reg; })
+      .catch(err => console.warn('SW registration failed:', err.message));
+  }
+
   async function setupPushNotifications(uid) {
     if (!messaging || !('serviceWorker' in navigator)) return;
     try {
-      const reg = await navigator.serviceWorker.register('/firebase-messaging-sw.js');
+      const reg = swRegistration || await navigator.serviceWorker.register('/firebase-messaging-sw.js');
       const permission = await Notification.requestPermission();
       if (permission !== 'granted') return;
       const token = await getToken(messaging, { vapidKey: VAPID_KEY, serviceWorkerRegistration: reg });
