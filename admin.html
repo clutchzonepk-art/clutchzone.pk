@@ -1654,7 +1654,12 @@ async function sendBroadcastNotification() {
 
     if (res.ok) {
       showToast(`✅ Notification bhej di! ${data.sent} sent, ${data.failed} failed.`);
-      resultBox.textContent = `Target players: ${targetPlayers.length} | Tokens found: ${tokens.length} | Sent: ${data.sent} | Failed: ${data.failed}`;
+      let detail = `Target players: ${targetPlayers.length} | Tokens found: ${tokens.length} | Sent: ${data.sent} | Failed: ${data.failed}`;
+      if (data.failures && data.failures.length) {
+        detail += `<br><br><strong style="color:var(--red)">Failure details:</strong><br>` +
+          data.failures.map(f => `<div style="margin-top:4px;word-break:break-all">${f}</div>`).join('');
+      }
+      resultBox.innerHTML = detail;
     } else {
       showToast('❌ Error: ' + (data.error || 'Unknown'));
       resultBox.textContent = 'Error: ' + (data.error || JSON.stringify(data));
