@@ -288,13 +288,16 @@ body{font-family:'Exo 2',sans-serif;background:var(--dark);color:var(--text);min
       <div class="fg"><label class="fl">Max Players</label><input type="number" class="fi" id="t-max" value="50"></div>
       <div class="fg"><label class="fl">Entry Fee (Rs)</label><input type="number" class="fi" id="t-entry" value="70"></div>
     </div>
-    <div class="fgrid">
-      <div class="fg"><label class="fl">🥇 1st Prize</label><input type="number" class="fi" id="t-p1" value="600"></div>
-      <div class="fg"><label class="fl">🥈 2nd Prize</label><input type="number" class="fi" id="t-p2" value="400"></div>
+    <div class="fg">
+      <label class="fl">🏆 Prize Positions</label>
+      <div id="t-prizes-list"></div>
+      <button type="button" class="abtn blue-btn" style="width:100%;margin-top:2px" onclick="addPrizeSlot()">➕ Add Position</button>
     </div>
-    <div class="fgrid">
-      <div class="fg"><label class="fl">🥉 3rd Prize</label><input type="number" class="fi" id="t-p3" value="200"></div>
-      <div class="fg"><label class="fl">💀 Kill Prize (Rs)</label><input type="number" class="fi" id="t-kill" value="20"></div>
+    <div class="fg">
+      <label class="fl" style="display:flex;align-items:center;gap:8px;cursor:pointer">
+        <input type="checkbox" id="t-kill-enabled" checked onchange="toggleKillField()" style="width:16px;height:16px"> 💀 Enable Kill Reward
+      </label>
+      <input type="number" class="fi" id="t-kill" value="20" style="margin-top:8px" placeholder="Rs per kill">
     </div>
     <div class="fg"><label class="fl">Status</label>
       <select class="fi" id="t-status">
@@ -323,28 +326,16 @@ body{font-family:'Exo 2',sans-serif;background:var(--dark);color:var(--text);min
     <div class="mtitle">🏆 Distribute Prizes <span class="mclose" onclick="hideModal('prize-modal')">✕</span></div>
     <div id="prize-t-name" style="color:var(--gold);font-weight:700;margin-bottom:14px;font-size:15px"></div>
 
-    <!-- TOP 3 WINNERS -->
-    <div style="font-size:13px;color:var(--dim);margin-bottom:8px;font-weight:600">🥇 TOP 3 WINNERS</div>
-    <div class="fg">
-      <label class="fl">🥇 1st Place — Player UID</label>
-      <select class="fi" id="prize-uid1"><option value="">-- Open Prizes to load players --</option></select>
-      <div style="font-size:12px;color:var(--gold);margin-top:4px">Prize: Rs <span id="prize-amt1">600</span></div>
-    </div>
-    <div class="fg">
-      <label class="fl">🥈 2nd Place — Player UID</label>
-      <select class="fi" id="prize-uid2"><option value="">-- Open Prizes to load players --</option></select>
-      <div style="font-size:12px;color:var(--gold);margin-top:4px">Prize: Rs <span id="prize-amt2">400</span></div>
-    </div>
-    <div class="fg">
-      <label class="fl">🥉 3rd Place — Player UID</label>
-      <select class="fi" id="prize-uid3"><option value="">-- Open Prizes to load players --</option></select>
-      <div style="font-size:12px;color:var(--gold);margin-top:4px">Prize: Rs <span id="prize-amt3">200</span></div>
-    </div>
+    <!-- WINNERS (dynamic — matches this tournament's prize positions) -->
+    <div style="font-size:13px;color:var(--dim);margin-bottom:8px;font-weight:600">🏆 WINNERS</div>
+    <div id="prize-winners-list"></div>
 
-    <!-- KILL BONUSES -->
-    <div style="font-size:13px;color:var(--dim);margin-top:14px;margin-bottom:8px;font-weight:600">💀 KILL BONUSES (Rs <span id="prize-kill-rate">20</span>/kill)</div>
-    <div id="kill-bonus-list"></div>
-    <button class="abtn blue-btn" style="margin-bottom:14px;width:100%" onclick="addKillRow()">➕ Add Player Kill Bonus</button>
+    <!-- KILL BONUSES (only shown if this tournament has kill reward enabled) -->
+    <div id="kill-bonus-section">
+      <div style="font-size:13px;color:var(--dim);margin-top:14px;margin-bottom:8px;font-weight:600">💀 KILL BONUSES (Rs <span id="prize-kill-rate">20</span>/kill)</div>
+      <div id="kill-bonus-list"></div>
+      <button class="abtn blue-btn" style="margin-bottom:14px;width:100%" onclick="addKillRow()">➕ Add Player Kill Bonus</button>
+    </div>
 
     <button class="btn-gold" onclick="distributeAllPrizes()">🏆 DISTRIBUTE ALL PRIZES</button>
   </div>
@@ -399,6 +390,10 @@ body{font-family:'Exo 2',sans-serif;background:var(--dark);color:var(--text);min
       </div>
     </div>
 
+    <!-- Extra winner blocks (4th, 5th... for CS tournaments) get appended here -->
+    <div id="res-extra-winners"></div>
+    <button class="abtn blue-btn" style="width:100%;margin-bottom:14px" onclick="addResultWinner()">➕ Add Winner (4th, 5th...)</button>
+
     <div style="font-size:13px;color:var(--dim);margin-bottom:10px;font-weight:600">💀 TOP FRAGGER (optional)</div>
     <div class="fgrid" style="margin-bottom:14px">
       <div class="fg"><label class="fl">Player Name</label><input type="text" class="fi" id="res-frag-name" placeholder="Top killer name"></div>
@@ -419,7 +414,7 @@ body{font-family:'Exo 2',sans-serif;background:var(--dark);color:var(--text);min
 <script type="module">
   import { initializeApp } from "https://www.gstatic.com/firebasejs/10.7.1/firebase-app.js";
   import { getAuth, signInWithPopup, GoogleAuthProvider, signOut, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/10.7.1/firebase-auth.js";
-  import { getFirestore, doc, getDoc, collection, addDoc, getDocs, updateDoc, deleteDoc, serverTimestamp, increment } from "https://www.gstatic.com/firebasejs/10.7.1/firebase-firestore.js";
+  import { getFirestore, doc, getDoc, collection, addDoc, getDocs, updateDoc, deleteDoc, serverTimestamp, increment, arrayRemove } from "https://www.gstatic.com/firebasejs/10.7.1/firebase-firestore.js";
 
   const firebaseConfig = {
     apiKey: "AIzaSyAtzCy0CzlheMJJhGCdHdwGg9CDP6KQQg4",
@@ -446,6 +441,7 @@ body{font-family:'Exo 2',sans-serif;background:var(--dark);color:var(--text);min
   window._deleteDoc = deleteDoc;
   window._doc = doc;
   window._increment = increment;
+  window._arrayRemove = arrayRemove;
   window._serverTimestamp = serverTimestamp;
 
   // ============================================
@@ -612,6 +608,46 @@ body{font-family:'Exo 2',sans-serif;background:var(--dark);color:var(--text);min
     } catch(e) { showToast('❌ Error: ' + e.message); }
   };
 
+  // ===== DYNAMIC PRIZE SLOTS (Create/Edit Tournament) =====
+  const PRIZE_MEDALS = ['🥇','🥈','🥉'];
+  function prizeMedal(i) { return PRIZE_MEDALS[i-1] || '🏅'; } // i = 1-indexed position
+  function posLabel(i) { return i===1?'1st':i===2?'2nd':i===3?'3rd':(i+'th'); }
+
+  window.addPrizeSlot = (value) => {
+    const list = document.getElementById('t-prizes-list');
+    const idx = list.children.length + 1;
+    const row = document.createElement('div');
+    row.className = 'prize-slot-row';
+    row.style.cssText = 'display:flex;gap:8px;align-items:center;margin-bottom:8px';
+    row.innerHTML = `
+      <span style="min-width:64px;font-size:13px;color:var(--dim)">${prizeMedal(idx)} ${posLabel(idx)}</span>
+      <input type="number" class="fi t-prize-input" value="${value!=null?value:''}" placeholder="Amount (Rs)" style="flex:1">
+      ${idx>1 ? '<button type="button" class="abtn red-btn" style="padding:8px 10px" onclick="removePrizeSlot(this)">✕</button>' : ''}
+    `;
+    list.appendChild(row);
+  };
+
+  window.removePrizeSlot = (btn) => {
+    btn.closest('.prize-slot-row').remove();
+    renumberPrizeSlots();
+  };
+
+  function renumberPrizeSlots() {
+    document.querySelectorAll('#t-prizes-list .prize-slot-row').forEach((row, i) => {
+      const idx = i + 1;
+      row.querySelector('span').textContent = prizeMedal(idx) + ' ' + posLabel(idx);
+    });
+  }
+
+  function getPrizesFromForm() {
+    return Array.from(document.querySelectorAll('#t-prizes-list .t-prize-input')).map(inp => parseInt(inp.value) || 0);
+  }
+
+  window.toggleKillField = () => {
+    const enabled = document.getElementById('t-kill-enabled').checked;
+    document.getElementById('t-kill').style.display = enabled ? '' : 'none';
+  };
+
   // ===== TOURNAMENTS =====
   function renderTournaments(ts) {
     const list = document.getElementById('tlist');
@@ -632,14 +668,14 @@ body{font-family:'Exo 2',sans-serif;background:var(--dark);color:var(--text);min
           <div class="t-box"><div class="t-val">Rs ${t.entryFee||70}</div><div class="t-lbl">Entry</div></div>
           <div class="t-box"><div class="t-val">${t.maxPlayers||50}</div><div class="t-lbl">Max</div></div>
           <div class="t-box"><div class="t-val" style="color:var(--gold)">Rs ${t.prize1||600}</div><div class="t-lbl">🥇 1st</div></div>
-          <div class="t-box"><div class="t-val">Rs ${t.killPrize||20}</div><div class="t-lbl">💀 Kill</div></div>
+          <div class="t-box"><div class="t-val">${(t.killEnabled===false || (!t.killEnabled && !t.killPrize)) ? '— Off' : 'Rs '+(t.killPrize||20)}</div><div class="t-lbl">💀 Kill</div></div>
         </div>
         <div class="t-actions">
           <button class="abtn gold-btn" onclick="openEditT('${t.id}')">✏️ Edit</button>
           <button class="abtn ${t.status==='open'?'red-btn':'green-btn'}" onclick="toggleT('${t.id}','${t.status||'open'}')">
             ${t.status==='open'?'⏸ Close':'▶️ Open'}</button>
-          <button class="abtn blue-btn" onclick="viewParts('${t.id}','${(t.name||'').replace(/'/g,'`')}','${t.prize1||600}','${t.prize2||400}','${t.prize3||200}','${t.killPrize||20}')">👥 Players</button>
-          <button class="abtn" style="background:#6c3483;color:#fff" onclick="openPrizeModal('${t.id}','${(t.name||'').replace(/'/g,'`')}','${t.prize1||600}','${t.prize2||400}','${t.prize3||200}','${t.killPrize||20}')">🏆 Prizes</button>
+          <button class="abtn blue-btn" onclick="viewParts('${t.id}','${(t.name||'').replace(/'/g,'`')}')">👥 Players</button>
+          <button class="abtn" style="background:#6c3483;color:#fff" onclick="openPrizeModal('${t.id}')">🏆 Prizes</button>
           <button class="abtn red-btn" onclick="deleteT('${t.id}','${(t.name||'').replace(/'/g,'`')}')">🗑️ Delete</button>
         </div>
       </div>`).join('');
@@ -652,10 +688,13 @@ body{font-family:'Exo 2',sans-serif;background:var(--dark);color:var(--text);min
     document.getElementById('t-time').value = '';
     document.getElementById('t-max').value = '50';
     document.getElementById('t-entry').value = '70';
-    document.getElementById('t-p1').value = '600';
-    document.getElementById('t-p2').value = '400';
-    document.getElementById('t-p3').value = '200';
+    document.getElementById('t-prizes-list').innerHTML = '';
+    addPrizeSlot(600);
+    addPrizeSlot(400);
+    addPrizeSlot(200);
+    document.getElementById('t-kill-enabled').checked = true;
     document.getElementById('t-kill').value = '20';
+    document.getElementById('t-kill').style.display = '';
     document.getElementById('t-status').value = 'open';
     showModal('t-modal');
   };
@@ -669,10 +708,18 @@ body{font-family:'Exo 2',sans-serif;background:var(--dark);color:var(--text);min
     document.getElementById('t-time').value = t.time||'';
     document.getElementById('t-max').value = t.maxPlayers||50;
     document.getElementById('t-entry').value = t.entryFee||70;
-    document.getElementById('t-p1').value = t.prize1||600;
-    document.getElementById('t-p2').value = t.prize2||400;
-    document.getElementById('t-p3').value = t.prize3||200;
-    document.getElementById('t-kill').value = t.killPrize||20;
+
+    // Dynamic prizes — use new `prizes` array if present, else fall back to legacy prize1/2/3
+    document.getElementById('t-prizes-list').innerHTML = '';
+    const prizes = (Array.isArray(t.prizes) && t.prizes.length) ? t.prizes : [t.prize1||600, t.prize2||400, t.prize3||200];
+    prizes.forEach(p => addPrizeSlot(p));
+
+    // Kill reward toggle — respects explicit killEnabled flag, else infers from killPrize value
+    const killEnabled = t.killEnabled !== undefined ? !!t.killEnabled : (t.killPrize||0) > 0;
+    document.getElementById('t-kill-enabled').checked = killEnabled;
+    document.getElementById('t-kill').value = t.killPrize || 20;
+    document.getElementById('t-kill').style.display = killEnabled ? '' : 'none';
+
     document.getElementById('t-status').value = t.status||'open';
     showModal('t-modal');
   };
@@ -683,15 +730,24 @@ body{font-family:'Exo 2',sans-serif;background:var(--dark);color:var(--text);min
     if (!name) { showToast('❌ Tournament name zaroor likho!'); return; }
     if (!time) { showToast('❌ Time zaroor likho!'); return; }
 
+    const prizes = getPrizesFromForm();
+    if (!prizes.length || !prizes[0]) { showToast('❌ Kam az kam 1st Prize amount likho!'); return; }
+
+    const killEnabled = document.getElementById('t-kill-enabled').checked;
+    const killPrize = killEnabled ? (parseInt(document.getElementById('t-kill').value) || 0) : 0;
+
     const data = {
       name,
       time,
       maxPlayers: parseInt(document.getElementById('t-max').value) || 50,
       entryFee: parseInt(document.getElementById('t-entry').value) || 70,
-      prize1: parseInt(document.getElementById('t-p1').value) || 600,
-      prize2: parseInt(document.getElementById('t-p2').value) || 400,
-      prize3: parseInt(document.getElementById('t-p3').value) || 200,
-      killPrize: parseInt(document.getElementById('t-kill').value) || 20,
+      prizes,
+      // legacy mirrors kept in sync so any old code/UI reading prize1/2/3 still works
+      prize1: prizes[0]||0,
+      prize2: prizes[1]||0,
+      prize3: prizes[2]||0,
+      killEnabled,
+      killPrize,
       status: document.getElementById('t-status').value,
       mode: 'Solo BR',
       updatedAt: serverTimestamp()
@@ -729,13 +785,20 @@ body{font-family:'Exo 2',sans-serif;background:var(--dark);color:var(--text);min
   window.deleteT = async (tid, name) => {
     if (!confirm('Delete "' + name + '"? Yeh wapis nahi aayega!')) return;
 
-    // BUG FIX 10: Clear activeTournament from all players who were in this tournament
+    // BUG FIX 10: Clear this tournament from all players who were in it (multi-join aware)
     try {
       const playersSnap = await getDocs(collection(db, 'players'));
       const batch = [];
       playersSnap.forEach(d => {
-        if (d.data().activeTournament === tid) {
-          batch.push(updateDoc(doc(db, 'players', d.id), { activeTournament: null, activeTournamentName: null }));
+        const pd = d.data();
+        const inLegacy = pd.activeTournament === tid;
+        const inArray = Array.isArray(pd.activeTournaments) && pd.activeTournaments.includes(tid);
+        if (inLegacy || inArray) {
+          batch.push(updateDoc(doc(db, 'players', d.id), {
+            activeTournament: null,
+            activeTournamentName: null,
+            activeTournaments: arrayRemove(tid)
+          }));
         }
       });
       if (batch.length > 0) await Promise.all(batch);
@@ -1292,29 +1355,43 @@ async function loadAnnouncements() {
   // ===== PRIZE DISTRIBUTION =====
   let _prizeTid = '', _prizeKillRate = 20;
 
-  window.openPrizeModal = async (tid, tname, p1, p2, p3, kill) => {
+  window.openPrizeModal = async (tid) => {
+    const t = allTournaments.find(x => x.id === tid);
+    if (!t) return;
     _prizeTid = tid;
-    _prizeKillRate = parseInt(kill) || 20;
-    document.getElementById('prize-t-name').textContent = '🏆 ' + tname;
-    document.getElementById('prize-amt1').textContent = p1;
-    document.getElementById('prize-amt2').textContent = p2;
-    document.getElementById('prize-amt3').textContent = p3;
-    document.getElementById('prize-kill-rate').textContent = kill;
+
+    // Prizes — dynamic list from `prizes` array, fallback to legacy prize1/2/3
+    const prizes = (Array.isArray(t.prizes) && t.prizes.length) ? t.prizes.filter((v,i)=> i===0 || v) : [t.prize1||600, t.prize2||400, t.prize3||200];
+    const killOn = t.killEnabled !== undefined ? !!t.killEnabled : (t.killPrize||0) > 0;
+    _prizeKillRate = killOn ? (parseInt(t.killPrize) || 0) : 0;
+
+    document.getElementById('prize-t-name').textContent = '🏆 ' + (t.name||'');
+    document.getElementById('prize-kill-rate').textContent = _prizeKillRate;
     document.getElementById('kill-bonus-list').innerHTML = '';
+    document.getElementById('kill-bonus-section').style.display = _prizeKillRate > 0 ? '' : 'none';
+
+    // Build winner rows dynamically (1 per prize position)
+    const medals = ['🥇','🥈','🥉'];
+    const posName = i => i===0?'1st':i===1?'2nd':i===2?'3rd':((i+1)+'th');
+    const winnersList = document.getElementById('prize-winners-list');
+    winnersList.innerHTML = prizes.map((amt, i) => `
+      <div class="fg">
+        <label class="fl">${medals[i]||'🏅'} ${posName(i)} Place — Player UID</label>
+        <select class="fi" id="prize-uid${i+1}"><option value="">⏳ Loading players...</option></select>
+        <div style="font-size:12px;color:var(--gold);margin-top:4px">Prize: Rs <span id="prize-amt${i+1}">${amt}</span></div>
+      </div>`).join('');
 
     // Helper: replace element with input or select
     function setPlayerField(elId, optHtml) {
       const existing = document.getElementById(elId);
       if (!existing) return;
       if (optHtml) {
-        // Replace with select dropdown
         const sel = document.createElement('select');
         sel.className = 'fi';
         sel.id = elId;
         sel.innerHTML = optHtml;
         existing.parentNode.replaceChild(sel, existing);
       } else {
-        // Replace with plain text input
         const inp = document.createElement('input');
         inp.type = 'text';
         inp.className = 'fi';
@@ -1325,25 +1402,15 @@ async function loadAnnouncements() {
       }
     }
 
-    // Show modal immediately with loading state
-    setPlayerField('prize-uid1', null);
-    setPlayerField('prize-uid2', null);
-    setPlayerField('prize-uid3', null);
-    document.getElementById('prize-uid1').placeholder = '⏳ Loading players...';
     showModal('prize-modal');
 
     // Then load participants async
     try {
       const snap = await window._getDocs(window._collection(window._db, 'tournaments', tid, 'participants'));
+      const ids = prizes.map((_, i) => 'prize-uid' + (i+1));
       if (snap.empty) {
-        // No participants found — use text inputs with helper message
-        ['prize-uid1','prize-uid2','prize-uid3'].forEach(elId => {
-          const el = document.getElementById(elId);
-          if (el) {
-            el.placeholder = 'No joined players found — enter UID manually';
-            el.value = '';
-          }
-        });
+        ids.forEach(elId => setPlayerField(elId, null));
+        ids.forEach(elId => { const el = document.getElementById(elId); if (el) el.placeholder = 'No joined players found — enter UID manually'; });
         showToast('⚠️ Koi joined player nahi mila. UID manually type karo.');
         return;
       }
@@ -1353,14 +1420,11 @@ async function loadAnnouncements() {
         opts.push(`<option value="${p.playerUID}">${p.playerName} — ${p.playerUID}</option>`);
       });
       const optHtml = opts.join('');
-      setPlayerField('prize-uid1', optHtml);
-      setPlayerField('prize-uid2', optHtml);
-      setPlayerField('prize-uid3', optHtml);
+      ids.forEach(elId => setPlayerField(elId, optHtml));
     } catch(e) {
-      ['prize-uid1','prize-uid2','prize-uid3'].forEach(elId => {
-        const el = document.getElementById(elId);
-        if (el) el.placeholder = 'Error loading — enter UID manually';
-      });
+      const ids = prizes.map((_, i) => 'prize-uid' + (i+1));
+      ids.forEach(elId => setPlayerField(elId, null));
+      ids.forEach(elId => { const el = document.getElementById(elId); if (el) el.placeholder = 'Error loading — enter UID manually'; });
       showToast('⚠️ Players load nahi hue: ' + e.message);
     }
   };
@@ -1377,14 +1441,23 @@ async function loadAnnouncements() {
   };
 
   window.distributeAllPrizes = async () => {
-    const uid1 = document.getElementById('prize-uid1').value.trim();
-    const uid2 = document.getElementById('prize-uid2').value.trim();
-    const uid3 = document.getElementById('prize-uid3').value.trim();
-    const amt1 = parseInt(document.getElementById('prize-amt1').textContent) || 0;
-    const amt2 = parseInt(document.getElementById('prize-amt2').textContent) || 0;
-    const amt3 = parseInt(document.getElementById('prize-amt3').textContent) || 0;
+    const medals = ['🥇','🥈','🥉'];
+    const posName = i => i===0?'1st':i===1?'2nd':i===2?'3rd':((i+1)+'th');
+    const winnerRows = document.querySelectorAll('#prize-winners-list .fg');
 
-    if (!uid1 && !uid2 && !uid3) {
+    const prizes = [];
+    winnerRows.forEach((row, i) => {
+      const uidEl = document.getElementById('prize-uid' + (i+1));
+      const amtEl = document.getElementById('prize-amt' + (i+1));
+      if (!uidEl || !amtEl) return;
+      const uid = uidEl.value.trim();
+      const amt = parseInt(amtEl.textContent) || 0;
+      if (uid && amt > 0) {
+        prizes.push({ uid, amt, label: `${medals[i]||'🏅'} ${posName(i)} Place Prize`, type: 'prize', isFirst: i===0 });
+      }
+    });
+
+    if (!prizes.length) {
       showToast("❌ Kam az kam 1st place UID daalo!");
       return;
     }
@@ -1398,20 +1471,14 @@ async function loadAnnouncements() {
       const playerMap = {};
       playersSnap.forEach(d => { playerMap[d.data().gameUID] = { id: d.id, ...d.data() }; });
 
-      const prizes = [
-        { uid: uid1, amt: amt1, label: '🥇 1st Place Prize', type: 'prize' },
-        { uid: uid2, amt: amt2, label: '🥈 2nd Place Prize', type: 'prize' },
-        { uid: uid3, amt: amt3, label: '🥉 3rd Place Prize', type: 'prize' },
-      ].filter(p => p.uid && p.amt > 0);
-
-      // Kill bonuses
+      // Kill bonuses (only relevant if this tournament has kill reward enabled)
       const killRows = document.querySelectorAll('#kill-bonus-list > div');
       killRows.forEach(row => {
         const inputs = row.querySelectorAll('input');
         const uid = inputs[0].value.trim();
         const kills = parseInt(inputs[1].value) || 0;
-        if (uid && kills > 0) {
-          prizes.push({ uid, amt: kills * _prizeKillRate, label: '💀 Kill Bonus ('+kills+' kills)', type: 'kill_prize' });
+        if (uid && kills > 0 && _prizeKillRate > 0) {
+          prizes.push({ uid, amt: kills * _prizeKillRate, label: '💀 Kill Bonus ('+kills+' kills)', type: 'kill_prize', isFirst: false });
         }
       });
 
@@ -1425,7 +1492,7 @@ async function loadAnnouncements() {
           totalEarnings: (player.totalEarnings || 0) + p.amt
         };
         // Increment tournamentsWon only for 1st place prize
-        if (p.label.includes('1st Place')) {
+        if (p.isFirst) {
           updateData.tournamentsWon = (player.tournamentsWon || 0) + 1;
         }
         await window._updateDoc(window._doc(window._db, 'players', player.id), updateData);
@@ -1445,7 +1512,7 @@ async function loadAnnouncements() {
       if (failed.length) msg += ' ❌ Not found: ' + failed.join(', ');
       showToast(msg);
 
-      // BUG FIX 11: Clear activeTournament from all participants so they can join next tournament
+      // BUG FIX 11: Clear this tournament from all participants (multi-join aware) so it no longer shows as active
       try {
         const partsSnap = await window._getDocs(window._collection(window._db, 'tournaments', _prizeTid, 'participants'));
         const clearBatch = [];
@@ -1453,7 +1520,11 @@ async function loadAnnouncements() {
           const pUID = d.data().playerUID;
           const player = playerMap[pUID];
           if (player) {
-            clearBatch.push(window._updateDoc(window._doc(window._db, 'players', player.id), { activeTournament: null, activeTournamentName: null }));
+            clearBatch.push(window._updateDoc(window._doc(window._db, 'players', player.id), {
+              activeTournament: null,
+              activeTournamentName: null,
+              activeTournaments: window._arrayRemove(_prizeTid)
+            }));
           }
         });
         if (clearBatch.length > 0) await Promise.all(clearBatch);
@@ -1477,6 +1548,35 @@ async function deleteAnnouncement(id) {
 }
 
 // ===== MATCH RESULTS =====
+let _resExtraCount = 0;
+function resPosLabel(i) { return i===1?'1ST':i===2?'2ND':i===3?'3RD':(i+'TH'); }
+function resPosColor(i) { return i===1?'var(--gold)':i===2?'#C0C0C0':i===3?'#CD7F32':'var(--dim)'; }
+function resPosMedal(i) { return i===1?'🥇':i===2?'🥈':i===3?'🥉':'🏅'; }
+
+window.addResultWinner = () => {
+  const pos = 4 + _resExtraCount;
+  _resExtraCount++;
+  const wrap = document.getElementById('res-extra-winners');
+  const block = document.createElement('div');
+  block.className = 'res-extra-block';
+  block.style.cssText = 'background:var(--dark4);border-radius:10px;padding:14px;margin-bottom:10px';
+  block.innerHTML = `
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px">
+      <div style="font-size:12px;color:${resPosColor(pos)};font-weight:700">${resPosMedal(pos)} ${resPosLabel(pos)} PLACE</div>
+      <button type="button" class="abtn red-btn" style="padding:4px 10px" onclick="this.closest('.res-extra-block').remove()">✕</button>
+    </div>
+    <div class="fgrid">
+      <div class="fg"><label class="fl">Player Name</label><input type="text" class="fi res-extra-name" placeholder="In-Game Name"></div>
+      <div class="fg"><label class="fl">Game UID</label><input type="text" class="fi res-extra-uid" placeholder="UID"></div>
+    </div>
+    <div class="fgrid">
+      <div class="fg"><label class="fl">Prize (Rs)</label><input type="number" class="fi res-extra-prize" placeholder="0" value="0"></div>
+      <div class="fg"><label class="fl">Kills</label><input type="number" class="fi res-extra-kills" placeholder="0" min="0"></div>
+    </div>`;
+  block.dataset.pos = pos;
+  wrap.appendChild(block);
+};
+
 async function postMatchResult() {
   const tname = document.getElementById('res-tname').value.trim();
   if (!tname) { showToast("❌ Tournament name likho!"); return; }
@@ -1497,6 +1597,16 @@ async function postMatchResult() {
     const prize= parseInt(document.getElementById(p.prizeId).value) || 0;
     const kills= parseInt(document.getElementById(p.killsId).value) || 0;
     if (name && uid) winners.push({ position:p.pos, name, uid, prize, kills });
+  });
+
+  // Extra winners (4th, 5th... added via + button, e.g. for Clash Squad tournaments)
+  document.querySelectorAll('#res-extra-winners .res-extra-block').forEach(block => {
+    const pos = parseInt(block.dataset.pos) || (winners.length + 1);
+    const name = block.querySelector('.res-extra-name').value.trim();
+    const uid  = block.querySelector('.res-extra-uid').value.trim();
+    const prize= parseInt(block.querySelector('.res-extra-prize').value) || 0;
+    const kills= parseInt(block.querySelector('.res-extra-kills').value) || 0;
+    if (name && uid) winners.push({ position: pos, name, uid, prize, kills });
   });
 
   const fragName  = document.getElementById('res-frag-name').value.trim();
@@ -1526,6 +1636,8 @@ async function postMatchResult() {
     document.getElementById('res-prize1').value = '600';
     document.getElementById('res-prize2').value = '400';
     document.getElementById('res-prize3').value = '200';
+    document.getElementById('res-extra-winners').innerHTML = '';
+    _resExtraCount = 0;
     loadMatchResults();
   } catch(e) { showToast("❌ Error: " + e.message); }
   finally { if (btn) { btn.disabled = false; btn.textContent = '📤 POST MATCH RESULT'; } }
@@ -1548,7 +1660,7 @@ async function loadMatchResults() {
       const date = r.completedAt ? new Date(r.completedAt).toLocaleDateString('en-PK',{day:'numeric',month:'short',year:'numeric',hour:'2-digit',minute:'2-digit'}) : '';
       const winners = (r.winners||[]).map(w =>
         `<div style="font-size:13px;padding:6px 0;border-bottom:1px solid rgba(255,255,255,0.04)">
-          ${w.position===1?'🥇':w.position===2?'🥈':'🥉'} <strong>${w.name}</strong> <span style="color:var(--dim);font-size:11px">(${w.uid})</span>
+          ${w.position===1?'🥇':w.position===2?'🥈':w.position===3?'🥉':'🏅'} <strong>${w.name}</strong> <span style="color:var(--dim);font-size:11px">(${w.uid})</span>
           <span style="color:var(--gold);float:right">Rs ${(w.prize||0).toLocaleString()}${w.kills?` • 💀${w.kills}`:''}</span>
         </div>`).join('');
       return `<div style="background:var(--dark3);border:1px solid var(--border2);border-radius:14px;padding:16px;margin-bottom:12px">
