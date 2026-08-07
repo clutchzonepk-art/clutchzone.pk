@@ -478,8 +478,16 @@
         // Repair path — already joined, just fix local state
         const repairData = {};
         const currentActive = currentProfile.activeTournaments || [];
-        if (!currentActive.includes(tournamentId)) {
-          repairData.activeTournaments = arrayUnion(tournamentId);
+        const legacyId = currentProfile.activeTournament;
+        const idsToAdd = [];
+        if (!currentActive.includes(tournamentId)) idsToAdd.push(tournamentId);
+        if (legacyId && !currentActive.includes(legacyId) && legacyId !== tournamentId) idsToAdd.push(legacyId);
+        if (idsToAdd.length) {
+          repairData.activeTournaments = arrayUnion(...idsToAdd);
+        }
+        if (legacyId) {
+          repairData.activeTournament = null;
+          repairData.activeTournamentName = null;
         }
         // Match by exact tournamentId stored in transaction (not substring name)
         const txSnap = await getDocs(collection(db, "players", currentUser.uid, "transactions"));
@@ -499,9 +507,9 @@
             createdAt: new Date().toISOString()
           });
         }
-        if (!currentActive.includes(tournamentId)) {
-          currentProfile.activeTournaments = [...currentActive, tournamentId];
-        }
+        currentProfile.activeTournaments = Array.from(new Set([...currentActive, ...idsToAdd]));
+        currentProfile.activeTournament = null;
+        currentProfile.activeTournamentName = null;
         refreshWalletPage();
         refreshTournamentButtons();
         hideModal('join-confirm-modal');
@@ -531,12 +539,21 @@
 
         const newBalance = freshBalance - entryFee;
 
+        // MIGRATION: if this player still has an old-style single activeTournament
+        // (from before multi-join support), fold it into the array too, then clear
+        // the legacy field so it isn't a second source of truth going forward.
+        const legacyId = playerSnap.data().activeTournament;
+        const idsToAdd = [tournamentId];
+        if (legacyId && legacyId !== tournamentId) idsToAdd.push(legacyId);
+
         // H-05 FIX: Only increment tournamentsPlayed AFTER participant add succeeds
         // (we do player doc update here, participant addDoc after transaction)
         // Multiple tournaments can be active at once — tournamentId is added to the array, not overwritten
         t.update(playerRef, {
           walletBalance: newBalance,
-          activeTournaments: arrayUnion(tournamentId)
+          activeTournaments: arrayUnion(...idsToAdd),
+          activeTournament: null,
+          activeTournamentName: null
         });
         t.update(tournamentRef, { joinedCount: increment(1) });
       });
@@ -720,16 +737,22 @@
       const tournaments = [];
       snap.forEach(d => tournaments.push({ id: d.id, ...d.data() }));
 
-      // Auto-clear any active tournaments that were deleted (multi-join aware)
-      if (currentProfile && Array.isArray(currentProfile.activeTournaments) && currentProfile.activeTournaments.length && currentUser) {
-        const stillValid = currentProfile.activeTournaments.filter(tid => tournaments.some(t => t.id === tid));
-        if (stillValid.length !== currentProfile.activeTournaments.length) {
-          await updateDoc(doc(db, "players", currentUser.uid), {
-            activeTournaments: stillValid,
-            activeTournament: null,
-            activeTournamentName: null
-          });
-          currentProfile.activeTournaments = stillValid;
+      // Auto-clear any active tournaments that were deleted (multi-join aware, legacy field merged too)
+      if (currentProfile && currentUser) {
+        const mergedActive = [...new Set([...(currentProfile.activeTournaments || []), ...(currentProfile.activeTournament ? [currentProfile.activeTournament] : [])])];
+        if (mergedActive.length) {
+          const stillValid = mergedActive.filter(tid => tournaments.some(t => t.id === tid));
+          const needsUpdate = stillValid.length !== (currentProfile.activeTournaments || []).length || !!currentProfile.activeTournament;
+          if (needsUpdate) {
+            await updateDoc(doc(db, "players", currentUser.uid), {
+              activeTournaments: stillValid,
+              activeTournament: null,
+              activeTournamentName: null
+            });
+            currentProfile.activeTournaments = stillValid;
+            currentProfile.activeTournament = null;
+            currentProfile.activeTournamentName = null;
+          }
         }
       }
 
@@ -2201,7 +2224,9 @@ function openJoinModal(tid, fee, name, current, max) {
 
   // Players can now join multiple tournaments at once (Clash Squad update) —
   // only block if they've already joined this exact tournament.
-  const activeList = p.activeTournaments || (p.activeTournament ? [p.activeTournament] : []);
+  // Merge both the new array field and the old single field (for players who
+  // joined before this update and haven't triggered a migration yet).
+  const activeList = [...new Set([...(p.activeTournaments || []), ...(p.activeTournament ? [p.activeTournament] : [])])];
   if (activeList.includes(tid)) {
     showToast("✅ You already joined this tournament!"); return;
   }
@@ -2227,7 +2252,10 @@ function openJoinModal(tid, fee, name, current, max) {
 function refreshTournamentButtons() {
   const p = window._safeGetProfile();
   if (!p) return;
-  const activeList = p.activeTournaments || (p.activeTournament ? [p.activeTournament] : []);
+  // Merge both the new array field and the old single field — a player joined
+  // under the old code before this update may still only have the legacy field
+  // set until their next join triggers migration.
+  const activeList = [...new Set([...(p.activeTournaments || []), ...(p.activeTournament ? [p.activeTournament] : [])])];
   // Update all join buttons — players can be JOINED in multiple tournaments at once now
   document.querySelectorAll('[data-tid]').forEach(btn => {
     const tid = btn.getAttribute('data-tid');
