@@ -397,7 +397,7 @@
       });
 
       // 1. Save withdrawal request (balance already deducted above)
-      await addDoc(collection(db, "withdrawalRequests"), {
+      const wReqRef = await addDoc(collection(db, "withdrawalRequests"), {
         playerFirebaseUID: currentUser.uid,
         playerUID: currentProfile.gameUID,
         playerName: currentProfile.name,
@@ -411,12 +411,17 @@
       });
 
       // 2. Save transaction record — amount actually deducted
-      await addDoc(collection(db, "players", currentUser.uid, "transactions"), {
+      const txRef = await addDoc(collection(db, "players", currentUser.uid, "transactions"), {
         type: 'withdrawal_pending',
         description: 'Withdrawal Request - ' + _withdrawMethod + ' (Pending Approval)',
         amount: -amount,
         createdAt: new Date().toISOString()
       });
+
+      // 2b. Link the transaction back to the request — this is what lets the admin
+      // panel update the EXACT correct transaction on approve/reject, even when a
+      // player has multiple pending withdrawals at once.
+      await updateDoc(wReqRef, { txDocId: txRef.id });
 
       // 3. Update local profile balance
       currentProfile.walletBalance = (currentProfile.walletBalance || 0) - amount;
