@@ -879,12 +879,24 @@ body{font-family:'Exo 2',sans-serif;background:var(--dark);color:var(--text);min
           createdAt: new Date().toISOString()
         });
       } else {
-        // Fallback: find first withdrawal_pending (player can only have one at a time)
+        // Fallback for legacy requests without a linked txDocId — match by amount
+        // (best effort; new withdrawals always have txDocId so this path won't be hit going forward)
         const txSnap = await getDocs(collection(db, 'players', playerFBUID, 'transactions'));
-        let pendingTxId = null;
+        let candidates = [];
         txSnap.forEach(d => {
-          if (d.data().type === 'withdrawal_pending' && !pendingTxId) pendingTxId = d.id;
+          const td = d.data();
+          if (td.type === 'withdrawal_pending') candidates.push({ id: d.id, ...td });
         });
+        // Prefer an exact amount match; fall back to oldest pending if none match
+        let pendingTxId = null;
+        const amtMatch = candidates.filter(c => Math.abs(c.amount) === amt);
+        if (amtMatch.length) {
+          amtMatch.sort((a,b) => (a.createdAt||'').localeCompare(b.createdAt||''));
+          pendingTxId = amtMatch[0].id;
+        } else if (candidates.length) {
+          candidates.sort((a,b) => (a.createdAt||'').localeCompare(b.createdAt||''));
+          pendingTxId = candidates[0].id;
+        }
         if (pendingTxId) {
           await updateDoc(doc(db, 'players', playerFBUID, 'transactions', pendingTxId), {
             type: 'withdrawal',
@@ -945,12 +957,22 @@ body{font-family:'Exo 2',sans-serif;background:var(--dark);color:var(--text);min
             createdAt: new Date().toISOString()
           });
         } else {
-          // Fallback: find first withdrawal_pending (player can only have one at a time)
+          // Fallback for legacy requests without a linked txDocId — match by amount
           const txSnap = await getDocs(collection(db, 'players', playerFBUID, 'transactions'));
-          let pendingTxId = null;
+          let candidates = [];
           txSnap.forEach(d => {
-            if (d.data().type === 'withdrawal_pending' && !pendingTxId) pendingTxId = d.id;
+            const td = d.data();
+            if (td.type === 'withdrawal_pending') candidates.push({ id: d.id, ...td });
           });
+          let pendingTxId = null;
+          const amtMatch = candidates.filter(c => Math.abs(c.amount) === wData.amount);
+          if (amtMatch.length) {
+            amtMatch.sort((a,b) => (a.createdAt||'').localeCompare(b.createdAt||''));
+            pendingTxId = amtMatch[0].id;
+          } else if (candidates.length) {
+            candidates.sort((a,b) => (a.createdAt||'').localeCompare(b.createdAt||''));
+            pendingTxId = candidates[0].id;
+          }
           if (pendingTxId) {
             await updateDoc(doc(db, 'players', playerFBUID, 'transactions', pendingTxId), {
               type: 'withdrawal_rejected',
