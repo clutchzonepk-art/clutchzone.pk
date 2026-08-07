@@ -144,7 +144,7 @@
 <script type="module">
   import { initializeApp } from "https://www.gstatic.com/firebasejs/10.7.1/firebase-app.js";
   import { getAuth, signInWithPopup, GoogleAuthProvider, signOut, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/10.7.1/firebase-auth.js";
-  import { getFirestore, doc, setDoc, getDoc, collection, addDoc, getDocs, query, where, orderBy, updateDoc, serverTimestamp, increment, runTransaction } from "https://www.gstatic.com/firebasejs/10.7.1/firebase-firestore.js";
+  import { getFirestore, doc, setDoc, getDoc, collection, addDoc, getDocs, query, where, orderBy, updateDoc, serverTimestamp, increment, runTransaction, arrayUnion, arrayRemove } from "https://www.gstatic.com/firebasejs/10.7.1/firebase-firestore.js";
   import { getMessaging, getToken, onMessage } from "https://www.gstatic.com/firebasejs/10.7.1/firebase-messaging.js";
 
   // ============================================
@@ -477,9 +477,9 @@
       if (alreadyJoined) {
         // Repair path — already joined, just fix local state
         const repairData = {};
-        if (!currentProfile.activeTournament) {
-          repairData.activeTournament = tournamentId;
-          repairData.activeTournamentName = tournamentName;
+        const currentActive = currentProfile.activeTournaments || [];
+        if (!currentActive.includes(tournamentId)) {
+          repairData.activeTournaments = arrayUnion(tournamentId);
         }
         // Match by exact tournamentId stored in transaction (not substring name)
         const txSnap = await getDocs(collection(db, "players", currentUser.uid, "transactions"));
@@ -499,8 +499,9 @@
             createdAt: new Date().toISOString()
           });
         }
-        currentProfile.activeTournament = tournamentId;
-        currentProfile.activeTournamentName = tournamentName;
+        if (!currentActive.includes(tournamentId)) {
+          currentProfile.activeTournaments = [...currentActive, tournamentId];
+        }
         refreshWalletPage();
         refreshTournamentButtons();
         hideModal('join-confirm-modal');
@@ -532,10 +533,10 @@
 
         // H-05 FIX: Only increment tournamentsPlayed AFTER participant add succeeds
         // (we do player doc update here, participant addDoc after transaction)
+        // Multiple tournaments can be active at once — tournamentId is added to the array, not overwritten
         t.update(playerRef, {
           walletBalance: newBalance,
-          activeTournament: tournamentId,
-          activeTournamentName: tournamentName
+          activeTournaments: arrayUnion(tournamentId)
         });
         t.update(tournamentRef, { joinedCount: increment(1) });
       });
@@ -568,8 +569,8 @@
       if (freshSnap.exists()) {
         currentProfile = freshSnap.data();
       } else {
-        currentProfile.activeTournament = tournamentId;
-        currentProfile.activeTournamentName = tournamentName;
+        const prevActive = currentProfile.activeTournaments || [];
+        currentProfile.activeTournaments = prevActive.includes(tournamentId) ? prevActive : [...prevActive, tournamentId];
         currentProfile.walletBalance = (currentProfile.walletBalance || 0) - entryFee;
         currentProfile.tournamentsPlayed = (currentProfile.tournamentsPlayed || 0) + 1;
       }
@@ -719,16 +720,16 @@
       const tournaments = [];
       snap.forEach(d => tournaments.push({ id: d.id, ...d.data() }));
 
-      // Auto-clear activeTournament if that tournament was deleted
-      if (currentProfile && currentProfile.activeTournament) {
-        const stillExists = tournaments.some(t => t.id === currentProfile.activeTournament);
-        if (!stillExists && currentUser) {
+      // Auto-clear any active tournaments that were deleted (multi-join aware)
+      if (currentProfile && Array.isArray(currentProfile.activeTournaments) && currentProfile.activeTournaments.length && currentUser) {
+        const stillValid = currentProfile.activeTournaments.filter(tid => tournaments.some(t => t.id === tid));
+        if (stillValid.length !== currentProfile.activeTournaments.length) {
           await updateDoc(doc(db, "players", currentUser.uid), {
+            activeTournaments: stillValid,
             activeTournament: null,
             activeTournamentName: null
           });
-          currentProfile.activeTournament = null;
-          currentProfile.activeTournamentName = null;
+          currentProfile.activeTournaments = stillValid;
         }
       }
 
@@ -783,18 +784,23 @@
             <div class="progress-label"><span>Players Joined</span><span>${joined}/${max}</span></div>
             <div class="progress-bar"><div class="progress-fill" style="width:${pct}%"></div></div>
           </div>
+          ${(() => {
+            const medals = ['🥇','🥈','🥉'];
+            const prizes = (Array.isArray(t.prizes) && t.prizes.length) ? t.prizes.filter((v,i)=> i===0 || v) : [t.prize1||600, t.prize2||400, t.prize3||200];
+            const killOn = t.killEnabled !== undefined ? !!t.killEnabled : (t.killPrize||0) > 0;
+            const total = prizes.reduce((a,b) => a+(b||0), 0);
+            const rows = prizes.map((amt, i) => `${medals[i] || '🏅'} Rs ${amt}`).join('<br>');
+            return `
           <div class="prize-box">
             <div>
               <div style="font-size:12px;color:var(--text-dim);margin-bottom:4px">Total Prize Pool</div>
-              <div class="prize-main">Rs ${((t.prize1||600)+(t.prize2||400)+(t.prize3||200)).toLocaleString()}+</div>
+              <div class="prize-main">Rs ${total.toLocaleString()}+</div>
             </div>
             <div class="prize-breakdown">
-              🥇 Rs ${t.prize1||600}<br>
-              🥈 Rs ${t.prize2||400}<br>
-              🥉 Rs ${t.prize3||200}<br>
-              💀 Rs ${t.killPrize||20}/kill
+              ${rows}${killOn ? `<br>💀 Rs ${t.killPrize||20}/kill` : ''}
             </div>
-          </div>
+          </div>`;
+          })()}
           <button class="join-btn" data-tid="${t.id}"
             onclick="openJoinModal('${t.id}', ${t.entryFee||70}, '${safeName}', ${joined}, ${max})"
             ${isDisabled}>
@@ -2193,13 +2199,11 @@ function openJoinModal(tid, fee, name, current, max) {
   if (!p) { showModal('login-prompt-modal'); return; }
   if (current >= max) { showToast("❌ Tournament is full!"); return; }
 
-  // Block if already in a tournament
-  if (p.activeTournament) {
-    if (p.activeTournament === tid) {
-      showToast("✅ You already joined this tournament!"); return;
-    }
-    showToast("⚠️ You are already in: " + (p.activeTournamentName || "a tournament") + ". Wait for it to finish!"); 
-    return;
+  // Players can now join multiple tournaments at once (Clash Squad update) —
+  // only block if they've already joined this exact tournament.
+  const activeList = p.activeTournaments || (p.activeTournament ? [p.activeTournament] : []);
+  if (activeList.includes(tid)) {
+    showToast("✅ You already joined this tournament!"); return;
   }
 
   _joinTournamentId = tid;
@@ -2223,18 +2227,16 @@ function openJoinModal(tid, fee, name, current, max) {
 function refreshTournamentButtons() {
   const p = window._safeGetProfile();
   if (!p) return;
-  // Update all join buttons
+  const activeList = p.activeTournaments || (p.activeTournament ? [p.activeTournament] : []);
+  // Update all join buttons — players can be JOINED in multiple tournaments at once now
   document.querySelectorAll('[data-tid]').forEach(btn => {
     const tid = btn.getAttribute('data-tid');
-    if (p.activeTournament === tid) {
+    if (activeList.includes(tid)) {
       btn.textContent = '✅ JOINED';
       btn.disabled = true;
       btn.style.background = 'rgba(46,204,113,0.2)';
       btn.style.color = 'var(--green)';
       btn.style.border = '1px solid rgba(46,204,113,0.4)';
-    } else if (p.activeTournament && p.activeTournament !== tid) {
-      btn.textContent = '🔒 Already In Tournament';
-      btn.disabled = true;
     }
   });
 }
