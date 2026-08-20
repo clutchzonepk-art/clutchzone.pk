@@ -1521,16 +1521,14 @@ async function loadAnnouncements() {
       for (const p of prizes) {
         const player = playerMap[p.uid];
         if (!player) { failed.push(p.uid + ' (not found)'); continue; }
-        const newBal = (player.walletBalance || 0) + p.amt;
         const updateData = {
-          walletBalance: newBal,
-          totalEarnings: (player.totalEarnings || 0) + p.amt
-        };
-        // Increment tournamentsWon only for 1st place prize
-        if (p.isFirst) {
-          updateData.tournamentsWon = (player.tournamentsWon || 0) + 1;
-        }
-        await window._updateDoc(window._doc(window._db, 'players', player.id), updateData);
+  walletBalance: window._increment(p.amt),
+  totalEarnings: window._increment(p.amt)
+};
+if (p.isFirst) {
+  updateData.tournamentsWon = window._increment(1);
+}
+await window._updateDoc(window._doc(window._db, 'players', player.id), updateData);
         await window._addDoc(window._collection(window._db, 'players', player.id, 'transactions'), {
           type: p.type,
           description: p.label,
