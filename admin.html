@@ -264,18 +264,21 @@ body{font-family:'Exo 2',sans-serif;background:var(--dark);color:var(--text);min
     <div class="mtitle">💰 Update Balance <span class="mclose" onclick="hideModal('bal-modal')">✕</span></div>
     <div class="notice">Player: <strong id="ub-name">-</strong><br>Current Balance: <strong id="ub-cur">Rs 0</strong></div>
     <div class="fg"><label class="fl">Action</label>
-      <select class="fi" id="ub-action">
-<select id="ub-type">
-  <option value="deposit">Deposit</option>
-  <option value="prize">Tournament Prize</option>
-  <option value="kill_prize">Kill Reward</option>
-  <option value="admin_update">Other / Correction</option>
-</select>
-        <option value="add">➕ Add (Deposit received)</option>
-        <option value="deduct">➖ Deduct</option>
-        <option value="set">🔄 Set exact amount</option>
-      </select>
-    </div>
+  <select class="fi" id="ub-action">
+    <option value="add">➕ Add (Deposit received)</option>
+    <option value="deduct">➖ Deduct</option>
+    <option value="set">🔄 Set exact amount</option>
+  </select>
+</div>
+
+<div class="fg"><label class="fl">Transaction Type</label>
+  <select class="fi" id="ub-type">
+    <option value="deposit">Deposit</option>
+    <option value="prize">Tournament Prize</option>
+    <option value="kill_prize">Kill Reward</option>
+    <option value="admin_update">Other / Correction</option>
+  </select>
+</div>
     <div class="fg"><label class="fl">Amount (Rs)</label><input type="number" class="fi" id="ub-amount" placeholder="Amount enter karo" min="1"></div>
     <div class="fg"><label class="fl">Reason (optional)</label><input type="text" class="fi" id="ub-reason" placeholder="e.g. JazzCash deposit Rs 500"></div>
     <button class="btn-gold" onclick="saveBal()">💾 UPDATE BALANCE</button>
