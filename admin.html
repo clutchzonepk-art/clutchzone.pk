@@ -522,6 +522,7 @@ body{font-family:'Exo 2',sans-serif;background:var(--dark);color:var(--text);min
       const tSnap = await getDocs(collection(db, "tournaments"));
       allTournaments = [];
       tSnap.forEach(d => allTournaments.push({id:d.id,...d.data()}));
+      window.allTournaments = allTournaments;
 
       // Withdrawals
       const wSnap = await getDocs(collection(db, "withdrawalRequests"));
@@ -712,7 +713,7 @@ body{font-family:'Exo 2',sans-serif;background:var(--dark);color:var(--text);min
   };
 
   window.openEditT = (tid) => {
-    const t = allTournaments.find(x => x.id===tid);
+    const t = window.allTournaments.find(x => x.id===tid);
     if (!t) return;
     document.getElementById('t-id').value = tid;
     document.getElementById('tmodal-title').textContent = '✏️ Edit Tournament';
@@ -1390,7 +1391,7 @@ async function loadAnnouncements() {
   let _prizeTid = '', _prizeKillRate = 20;
 
   window.openPrizeModal = async (tid) => {
-    const t = allTournaments.find(x => x.id === tid);
+    const t = window.allTournaments.find(x => x.id === tid);
     if (!t) return;
     _prizeTid = tid;
 
