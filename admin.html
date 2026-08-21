@@ -1513,11 +1513,11 @@ async function loadAnnouncements() {
         const uid = inputs[0].value.trim();
         const kills = parseInt(inputs[1].value) || 0;
         if (uid && kills > 0 && _prizeKillRate > 0) {
-          prizes.push({ uid, amt: kills * _prizeKillRate, label: '💀 Kill Bonus ('+kills+' kills)', type: 'kill_prize', isFirst: false });
+          prizes.push({ uid, amt: kills * _prizeKillRate, kills, label: '💀 Kill Bonus ('+kills+' kills)', type: 'kill_prize', isFirst: false });
         }
       });
 
-      let success = 0, failed = [];
+     let success = 0, failed = [];
       for (const p of prizes) {
         const player = playerMap[p.uid];
         if (!player) { failed.push(p.uid + ' (not found)'); continue; }
@@ -1528,6 +1528,9 @@ async function loadAnnouncements() {
 if (p.isFirst) {
   updateData.tournamentsWon = window._increment(1);
 }
+if (p.type === 'kill_prize' && p.kills) {
+  updateData.totalKills = window._increment(p.kills);
+}
 await window._updateDoc(window._doc(window._db, 'players', player.id), updateData);
         await window._addDoc(window._collection(window._db, 'players', player.id, 'transactions'), {
           type: p.type,
@@ -1536,7 +1539,7 @@ await window._updateDoc(window._doc(window._db, 'players', player.id), updateDat
           tournamentId: _prizeTid,
           createdAt: new Date().toISOString()
         });
-        window._sendPush(player.id, '🏆 You Won a Prize!', `${p.label}: Rs ${p.amt} added to your wallet`, '/wallet');
+       window._sendPush(player.id, '🏆 You Won a Prize!', `${p.label}: Rs ${p.amt} added to your wallet`, '/wallet');
         success++;
       }
 
